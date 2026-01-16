@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && rm -rf index.html assets && cp -r dist/* . && git add . && git commit -m 'deploy' && git push && git checkout HEAD -- index.html"
+    "deploy": "cp index.html index.html.source && npm run build && rm -rf index.html assets && cp -r dist/* . && git add . && git commit -m 'deploy' && git push && mv index.html.source index.html"
   },
   "dependencies": {
     "jszip": "^3.10.1",

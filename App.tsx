@@ -217,10 +217,6 @@ export default function App() {
   const loadSamplesFromDB = useCallback(async () => {
     const stored = await getAllSamples();
     
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/2d98c556-ea4c-4e36-aeb0-8a0a74512641',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:218',message:'loadSamplesFromDB: received from getAllSamples',data:{count:stored.length,order:stored.map(s=>({id:s.id,name:s.name,createdAt:s.createdAt}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    
     const loaded: SampleData[] = [];
     for (const s of stored) {
       try {
@@ -229,15 +225,7 @@ export default function App() {
       } catch (e) { console.error("Decode fail:", s.name); }
     }
     
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/2d98c556-ea4c-4e36-aeb0-8a0a74512641',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:226',message:'loadSamplesFromDB: before setSamples',data:{count:loaded.length,order:loaded.map(s=>({id:s.id,name:s.name}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    
     setSamples(loaded);
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/2d98c556-ea4c-4e36-aeb0-8a0a74512641',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:227',message:'loadSamplesFromDB: after setSamples',data:{timestamp:Date.now()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
   }, []);
 
   useEffect(() => { loadSamplesFromDB(); }, [loadSamplesFromDB]);
