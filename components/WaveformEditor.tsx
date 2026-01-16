@@ -1,0 +1,1034 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { SampleData } from '../types';
+import { TriggerInfo, audioEngine } from '../services/audioEngine';
+
+interface WaveformEditorProps {
+  sample: SampleData;
+  start: number;
+  end: number;
+  onUpdate: (start: number, end: number) => void;
+  onPreview: (time: number, looping: boolean) => void;
+  playbackTrigger: TriggerInfo | null;
+  previewActive: boolean;
+  onLoopStop?: () => void;
+  padId?: number;
+  isReversed?: boolean;
+  playMode?: 'MONO' | 'POLY';
+  onToggleReverse?: () => void;
+  onTogglePlayMode?: () => void;
+}
+
+const WaveformEditor: React.FC<WaveformEditorProps> = ({ 
+  sample, 
+  start, 
+  end, 
+  onUpdate, 
+  onPreview, 
+  playbackTrigger, 
+  previewActive, 
+  onLoopStop,
+  padId,
+  isReversed = false,
+  playMode = 'POLY',
+  onToggleReverse,
+  onTogglePlayMode
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number | null>(null);
+  
+  const previewStartTimeRef = useRef<number>(0);
+  const previewPositionRef = useRef<number>(0);
+  const isPreviewingRef = useRef<boolean>(false);
+  const lastLoopStartRef = useRef<number>(0);
+  const lastLoopEndRef = useRef<number>(0);
+  
+  const [zoom, setZoom] = useState(1);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [focusMode, setFocusMode] = useState<'start' | 'end'>('start');
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragTarget, setDragTarget] = useState<'start' | 'end' | null>(null);
+  const [isAltHeld, setIsAltHeld] = useState(false);
+  const [isLoopingPreview, setIsLoopingPreview] = useState(false);
+
+  const duration = sample.buffer.duration;
+  const viewDuration = duration / zoom;
+  const maxOffset = Math.max(0, duration - viewDuration);
+  const effectiveOffset = Math.min(scrollOffset, maxOffset);
+
+  const HANDLE_PICK_RADIUS_PX = 40; 
+
+  const updateStart = useCallback((val: number) => {
+    onUpdate(Math.max(0, Math.min(val, end - 0.000001)), end);
+  }, [end, onUpdate]);
+
+  const updateEnd = useCallback((val: number) => {
+    onUpdate(start, Math.max(start + 0.000001, Math.min(val, duration)));
+  }, [start, duration, onUpdate]);
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const normalizedX = (e.clientX - rect.left) / rect.width;
+    const timeAtX = effectiveOffset + normalizedX * viewDuration;
+
+    if (e.altKey || isAltHeld) {
+      runPreviewAt(timeAtX, false);
+      return;
+    }
+
+    const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * canvas.width;
+    const startX = timeToX(start);
+    const endX = timeToX(end);
+
+    const mouseXCss = e.clientX - rect.left;
+    const startXCss = startX * (rect.width / canvas.width);
+    const endXCss = endX * (rect.width / canvas.width);
+
+    const distToStart = Math.abs(mouseXCss - startXCss);
+    const distToEnd = Math.abs(mouseXCss - endXCss);
+
+    let target: 'start' | 'end' | null = null;
+
+    if (distToStart < HANDLE_PICK_RADIUS_PX && distToStart <= distToEnd) {
+      target = 'start';
+    } else if (distToEnd < HANDLE_PICK_RADIUS_PX) {
+      target = 'end';
+    }
+
+    if (target) {
+      setIsDragging(true);
+      setDragTarget(target);
+      setFocusMode(target);
+    } else {
+      if (focusMode === 'start') {
+        updateStart(timeAtX);
+        setDragTarget('start');
+      } else {
+        updateEnd(timeAtX);
+        setDragTarget('end');
+      }
+      setIsDragging(true);
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const moveRect = canvas.getBoundingClientRect();
+      const moveNormX = (moveEvent.clientX - moveRect.left) / moveRect.width;
+      const moveTime = effectiveOffset + moveNormX * viewDuration;
+      
+      const activeTarget = dragTarget || focusMode;
+      if (activeTarget === 'start') updateStart(moveTime);
+      else updateEnd(moveTime);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      setDragTarget(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey) setIsAltHeld(true);
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setFocusMode(prev => prev === 'start' ? 'end' : 'start');
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const nudge = e.shiftKey ? 0.05 : 0.001;
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        if (focusMode === 'start') updateStart(start + dir * nudge);
+        else updateEnd(end + dir * nudge);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.altKey) setIsAltHeld(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [focusMode, start, end, updateStart, updateEnd]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const normalizedX = (e.clientX - rect.left) / rect.width;
+
+      if (e.ctrlKey || e.metaKey) {
+        const zoomSpeed = 0.01;
+        const zoomDelta = 1 - e.deltaY * zoomSpeed;
+        setZoom(prev => {
+          const next = Math.max(1, Math.min(prev * zoomDelta, 50000));
+          const timeAtMouse = effectiveOffset + normalizedX * (duration / prev);
+          const nextViewDur = duration / next;
+          setScrollOffset(Math.max(0, Math.min(timeAtMouse - normalizedX * nextViewDur, duration - nextViewDur)));
+          return next;
+        });
+      } else {
+        const scrollSpeed = (duration / zoom) / 1000;
+        const moveX = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        setScrollOffset(prev => Math.max(0, Math.min(prev + moveX * scrollSpeed, maxOffset)));
+      }
+    };
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [duration, zoom, maxOffset, effectiveOffset]);
+
+  const runPreviewAt = useCallback((time: number, looping: boolean) => {
+    onPreview(time, looping);
+    previewStartTimeRef.current = audioEngine.ctx.currentTime;
+    previewPositionRef.current = time;
+    isPreviewingRef.current = true;
+    if (looping) setIsLoopingPreview(true);
+  }, [onPreview]);
+
+  useEffect(() => {
+    if (!previewActive) {
+      isPreviewingRef.current = false;
+      setIsLoopingPreview(false);
+    }
+  }, [previewActive]);
+
+  // Restart loop when start/end changes during loop playback
+  useEffect(() => {
+    if (isLoopingPreview && previewActive) {
+      // Only restart if start/end actually changed (avoid infinite loops)
+      if (lastLoopStartRef.current !== start || lastLoopEndRef.current !== end) {
+        lastLoopStartRef.current = start;
+        lastLoopEndRef.current = end;
+        audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
+        runPreviewAt(start, true);
+      }
+    }
+  }, [start, end, isLoopingPreview, previewActive, runPreviewAt]);
+
+  const toggleLoopPreview = () => {
+    if (isLoopingPreview) {
+      setIsLoopingPreview(false);
+      isPreviewingRef.current = false;
+      audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
+      if (onLoopStop) onLoopStop();
+    } else {
+      // Validate start/end before looping
+      if (start >= end || end - start < 0.001) {
+        console.warn('Cannot start loop: invalid start/end range', { start, end });
+        return;
+      }
+      runPreviewAt(start, true);
+    }
+  };
+
+  // Calculate positions based on requirements
+  const WAVE_TOP = 63; // Waveform container top position
+  const WAVE_HEIGHT = 178;
+  const WAVE_BOTTOM = WAVE_TOP + WAVE_HEIGHT; // 241
+  
+  // Buttons are 16px above waveform
+  const BUTTONS_TOP = WAVE_TOP - 16 - 17; // 30 (accounting for button height)
+  
+  // Sample name is 10px above buttons
+  const SAMPLE_NAME_TOP = BUTTONS_TOP - 10 - 12; // 8 (accounting for text height)
+  
+  // MONO toggle is 34px above waveform, centered
+  const MONO_TOP = WAVE_TOP - 34 - 29; // 0
+  const MONO_LEFT = (314 - 29) / 2; // 142.5
+  const MONO_RIGHT = 314 - MONO_LEFT - 29; // Right edge position
+  
+  // Sample name should not overlap with mono button - check if they would overlap
+  const SAMPLE_NAME_WIDTH = 88; // From CSS
+  const SAMPLE_NAME_RIGHT = SAMPLE_NAME_TOP === MONO_TOP ? SAMPLE_NAME_WIDTH : 314; // Only constrain if on same row
+  
+  // Calculate button positions from right to left: REVERSE, LOOP, position, END, START
+  // REVERSE at right edge of waveform container (313px)
+  const REVERSE_WIDTH = 41;
+  const REVERSE_LEFT = 313 - REVERSE_WIDTH; // 272
+  // LOOP is 7px left of REVERSE
+  const LOOP_WIDTH = 31;
+  const LOOP_LEFT = REVERSE_LEFT - 7 - LOOP_WIDTH; // 234
+  // Position number is 7px left of LOOP button container (not the text)
+  const POS_WIDTH = 50; // Make it wider to accommodate the number text
+  const POS_LEFT = LOOP_LEFT - 7 - POS_WIDTH; // Position's right edge is 7px left of LOOP's left edge
+  // START/END at left edge (0px) of waveform container
+  const START_LEFT = 0;
+  const END_LEFT = START_LEFT + 31 + 7; // 38 (START width + gap)
+  
+  // PAD number is 10px above reverse button
+  const PAD_TOP = BUTTONS_TOP - 10 - 12; // 8
+  
+  // Zoom slider is 34px below waveform
+  const ZOOM_SLIDER_TOP = WAVE_BOTTOM + 34; // 275
+  // Zoom counter is 7px above zoom slider, right-aligned with slider
+  const ZOOM_COUNTER_TOP = ZOOM_SLIDER_TOP - 7 - 12; // 256
+  // Instructions are 17px below zoom slider, centered
+  const INSTRUCTIONS_TOP = ZOOM_SLIDER_TOP + 17; // 292
+  
+  // Zoom +/- buttons: 7px from right, 8px down inside waveform container
+  const ZOOM_BUTTONS_RIGHT = 7;
+  const ZOOM_BUTTONS_TOP = WAVE_TOP + 8; // 71
+  
+  // Calculate zoom slider position - reactive to zooming and scrolling
+  const zoomSliderTotalWidth = 313; // Total slider width
+  // The viewed section width is proportional to the zoom level
+  // When zoomed in (high zoom), viewed section is smaller
+  // When zoomed out (low zoom), viewed section is larger
+  const zoomSliderWidth = duration > 0 && maxOffset > 0
+    ? Math.max(10, Math.min(zoomSliderTotalWidth, (viewDuration / duration) * zoomSliderTotalWidth))
+    : zoomSliderTotalWidth; // When fully zoomed out, slider takes full width
+  
+  // Calculate position: when at start (offset=0), position should be 0
+  // When at end (offset=maxOffset), position should be (totalWidth - sliderWidth)
+  const zoomSliderPosition = duration > 0 && maxOffset > 0
+    ? (effectiveOffset / maxOffset) * (zoomSliderTotalWidth - zoomSliderWidth)
+    : 0;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let isRendering = true;
+
+    // Check if buffer has no meaningful audio (empty buffer)
+    const hasNoAudio = sample.buffer.length <= 1 || duration <= 0.001;
+
+    const render = () => {
+      if (!isRendering || document.hidden) {
+        animationRef.current = requestAnimationFrame(render);
+        return;
+      }
+      const width = canvas.width;
+      const height = canvas.height;
+      const amp = height / 2;
+
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 20; i++) {
+        const gx = (i / 20) * width;
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(0, amp); ctx.lineTo(width, amp); ctx.stroke();
+
+      // If there's no audio, just draw a static horizontal line in the middle
+      if (hasNoAudio) {
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, amp);
+        ctx.lineTo(width, amp);
+        ctx.stroke();
+      } else {
+        const data = sample.buffer.getChannelData(0);
+        const startSampleIdx = Math.floor((effectiveOffset / duration) * data.length);
+        const endSampleIdx = Math.floor(((effectiveOffset + viewDuration) / duration) * data.length);
+        const samplesInView = endSampleIdx - startSampleIdx;
+
+        // High-quality waveform rendering - white color, matching old code algorithm
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < width; i++) {
+          const s1 = startSampleIdx + Math.floor((i / width) * samplesInView);
+          const s2 = startSampleIdx + Math.floor(((i + 1) / width) * samplesInView);
+          if (s1 >= data.length) break;
+          let min = 1.0, max = -1.0;
+          const actualS2 = Math.max(s1 + 1, s2);
+          for (let j = s1; j < actualS2 && j < data.length; j++) {
+            const datum = data[j];
+            if (datum < min) min = datum;
+            if (datum > max) max = datum;
+          }
+          ctx.moveTo(i, (1 + min) * amp);
+          ctx.lineTo(i, (1 + max) * amp);
+        }
+        ctx.stroke();
+      }
+
+      // Skip the rest of the rendering (markers, playhead, etc.) when there's no audio
+      if (hasNoAudio) {
+        if (isRendering) {
+          animationRef.current = requestAnimationFrame(render);
+        }
+        return;
+      }
+
+      const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * width;
+      const startX = timeToX(start);
+      const endX = timeToX(end);
+
+      // Invert colors in selected section
+      if (startX < width && endX > 0) {
+        const previousCompositeOp = ctx.globalCompositeOperation;
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(Math.max(0, startX), 0, Math.min(width, endX) - Math.max(0, startX), height);
+        ctx.globalCompositeOperation = previousCompositeOp;
+      }
+
+      const now = audioEngine.ctx.currentTime;
+
+      if (playbackTrigger) {
+        const elapsed = now - playbackTrigger.startTime;
+        const regionDuration = playbackTrigger.originalEnd - playbackTrigger.originalStart;
+        
+        if (elapsed < playbackTrigger.duration || playbackTrigger.duration === Infinity) {
+          let phTime: number;
+          
+          if (playbackTrigger.isReversed) {
+            const totalPositionInReversedBuffer = playbackTrigger.offset + (elapsed * playbackTrigger.rate);
+            
+            if (playbackTrigger.duration === Infinity && regionDuration > 0) {
+              let wrappedPosition = totalPositionInReversedBuffer % regionDuration;
+              if (wrappedPosition < 0) wrappedPosition += regionDuration;
+              phTime = playbackTrigger.originalEnd - wrappedPosition;
+            } else {
+              phTime = playbackTrigger.originalEnd - totalPositionInReversedBuffer;
+            }
+            
+            phTime = Math.max(playbackTrigger.originalStart, Math.min(playbackTrigger.originalEnd, phTime));
+          } else {
+            phTime = playbackTrigger.offset + (elapsed * playbackTrigger.rate);
+            
+            if (playbackTrigger.duration === Infinity && regionDuration > 0) {
+              phTime = playbackTrigger.originalStart + ((phTime - playbackTrigger.originalStart) % regionDuration);
+            } else {
+              phTime = Math.max(playbackTrigger.originalStart, Math.min(playbackTrigger.originalEnd, phTime));
+            }
+          }
+          
+          const phX = timeToX(phTime);
+          if (phX >= 0 && phX <= width) {
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, height); ctx.stroke();
+            ctx.globalCompositeOperation = prevOp;
+          }
+        }
+      }
+
+      if (isPreviewingRef.current && !playbackTrigger) {
+        const elapsed = now - previewStartTimeRef.current;
+        let phTime = previewPositionRef.current + elapsed;
+        
+        if (isLoopingPreview) {
+          const loopDur = end - start;
+          if (loopDur > 0) {
+            const timeInLoop = (elapsed % (loopDur / 1));
+            phTime = start + timeInLoop;
+          }
+        }
+
+        if (!isLoopingPreview && phTime >= duration) {
+          isPreviewingRef.current = false;
+        } else if (phTime <= duration && (!isLoopingPreview || phTime <= end + 0.1)) {
+          const ghX = timeToX(phTime);
+          if (ghX >= 0 && ghX <= width) {
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([2, 4]);
+            ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, height); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalCompositeOperation = prevOp;
+          }
+        }
+      }
+
+      // Draw S and E markers
+      const drawMarker = (x: number, label: 'S' | 'E', isFocus: boolean) => {
+        if (x < -20 || x > width + 20) return;
+        
+        // Draw solid black vertical line
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); 
+        ctx.moveTo(x, 0); 
+        ctx.lineTo(x, height); 
+        ctx.stroke();
+        
+        // Draw black rectangular handle with white text
+        const handleWidth = 14;
+        const handleHeight = 16;
+        
+        ctx.fillStyle = '#000000';
+        
+        if (label === 'S') {
+          // S handle: top right of the line (pointing into selection)
+          ctx.fillRect(x, 0, handleWidth, handleHeight);
+          
+          // White S text
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '600 11px Barlow Condensed';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, x + handleWidth / 2, handleHeight / 2);
+        } else {
+          // E handle: bottom left of the line (pointing into selection)
+          ctx.fillRect(x - handleWidth, height - handleHeight, handleWidth, handleHeight);
+          
+          // White E text
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '600 11px Barlow Condensed';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, x - handleWidth / 2, height - handleHeight / 2);
+        }
+      };
+
+      drawMarker(startX, 'S', focusMode === 'start');
+      drawMarker(endX, 'E', focusMode === 'end');
+
+      if (isRendering) {
+        animationRef.current = requestAnimationFrame(render);
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(render);
+    return () => {
+      isRendering = false;
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [sample, zoom, effectiveOffset, viewDuration, duration, focusMode, start, end, playbackTrigger, isLoopingPreview]);
+
+  return (
+    <div 
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        width: '314px',
+        height: '302px'
+      }}
+    >
+      {/* File name - TTDWFM_MIX_1_6_23.WAV */}
+      <div style={{
+        position: 'absolute',
+        height: '12px',
+        fontFamily: 'Barlow Condensed',
+        fontStyle: 'normal',
+        fontWeight: 500,
+        fontSize: '10px',
+        lineHeight: '12px',
+        color: '#FFFFFF',
+        top: `${SAMPLE_NAME_TOP}px`,
+        left: '0px',
+        // Ensure it doesn't overlap with mono button - stop 30px before it
+        maxWidth: `${MONO_LEFT - 30}px`,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }}>
+        {sample.name.toUpperCase()}
+      </div>
+
+      {/* START BUTTON */}
+      <button
+        onClick={() => setFocusMode('start')}
+        style={{
+          position: 'absolute',
+          width: '31px',
+          height: '17px',
+          background: focusMode === 'start' ? '#FFFFFF' : 'transparent',
+          border: focusMode === 'start' ? 'none' : '2px solid #FFFFFF',
+          boxSizing: 'border-box',
+          top: `${BUTTONS_TOP}px`,
+          left: `${START_LEFT}px`
+        }}
+      >
+        <span style={{
+          position: 'absolute',
+          width: '22px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: focusMode === 'start' ? '#000000' : '#FFFFFF',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}>
+          START
+        </span>
+      </button>
+
+      {/* END BUTTON */}
+      <button
+        onClick={() => setFocusMode('end')}
+        style={{
+          position: 'absolute',
+          width: '31px',
+          height: '17px',
+          border: '2px solid #FFFFFF',
+          boxSizing: 'border-box',
+          background: focusMode === 'end' ? '#FFFFFF' : 'transparent',
+          top: `${BUTTONS_TOP}px`,
+          left: `${END_LEFT}px`
+        }}
+      >
+        <span style={{
+          position: 'absolute',
+          width: '15px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: focusMode === 'end' ? '#000000' : '#FFFFFF',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}>
+          END
+        </span>
+      </button>
+
+      {/* MONO/POLY TOGGLE - Circle */}
+      <button
+        onClick={onTogglePlayMode}
+        className="circular-button"
+        style={{
+          position: 'absolute',
+          width: '29px',
+          height: '29px',
+          background: playMode === 'MONO' ? '#FFFFFF' : 'transparent',
+          border: playMode === 'MONO' ? 'none' : '2px solid #FFFFFF',
+          boxSizing: 'border-box',
+          top: `${MONO_TOP}px`,
+          left: `${MONO_LEFT}px`,
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          cursor: 'pointer'
+        }}
+      >
+        <span style={{
+          position: 'absolute',
+          width: '20px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: playMode === 'MONO' ? '#000000' : '#FFFFFF',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          textAlign: 'center'
+        }}>
+          {playMode === 'MONO' ? 'MONO' : 'POLY'}
+        </span>
+      </button>
+
+      {/* PAD_4 */}
+      {padId !== undefined && (
+        <div style={{
+          position: 'absolute',
+          width: '22px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          textAlign: 'right',
+          color: '#FFFFFF',
+          top: `${PAD_TOP}px`,
+          right: '0px'
+        }}>
+          PAD_{padId}
+        </div>
+      )}
+
+      {/* Time display - position number */}
+      <div style={{
+        position: 'absolute',
+        width: `${POS_WIDTH}px`,
+        height: '12px',
+        fontFamily: 'Barlow Condensed',
+        fontStyle: 'normal',
+        fontWeight: 400,
+        fontSize: '10px',
+        lineHeight: '12px',
+        color: '#FFFFFF',
+        top: `${BUTTONS_TOP + 2.5}px`,
+        left: `${POS_LEFT}px`,
+        textAlign: 'right'
+      }}>
+        {(focusMode === 'start' ? start : end).toFixed(6)}
+        </div>
+
+      {/* LOOP BUTTON */}
+      <button
+        onClick={toggleLoopPreview}
+        style={{
+          position: 'absolute',
+          width: '31px',
+          height: '17px',
+          border: isLoopingPreview ? 'none' : '2px solid #FFFFFF',
+          boxSizing: 'border-box',
+          background: isLoopingPreview ? '#FFFFFF' : 'transparent',
+          top: `${BUTTONS_TOP}px`,
+          left: `${LOOP_LEFT}px`
+        }}
+      >
+        <span style={{
+          position: 'absolute',
+          width: '18px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          textAlign: 'center',
+          color: isLoopingPreview ? '#000000' : '#FFFFFF',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}>
+          LOOP
+        </span>
+      </button>
+
+      {/* REVERSE BUTTON */}
+      <button
+        onClick={onToggleReverse}
+        style={{
+          position: 'absolute',
+          width: '41px',
+          height: '17px',
+          border: isReversed ? 'none' : '2px solid #FFFFFF',
+          boxSizing: 'border-box',
+          background: isReversed ? '#FFFFFF' : 'transparent',
+          top: `${BUTTONS_TOP}px`,
+          left: `${REVERSE_LEFT}px`
+        }}
+      >
+        <span style={{
+          position: 'absolute',
+          width: '31px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 500,
+          fontSize: '10px',
+          lineHeight: '12px',
+          textAlign: 'center',
+          color: isReversed ? '#000000' : '#FFFFFF',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}>
+          REVERSE
+        </span>
+      </button>
+
+      {/* Waveform Container */}
+      <div 
+        className="waveform-container"
+        style={{
+          position: 'absolute',
+          width: '313px',
+          height: '178px',
+          borderTop: '2px solid #FFFFFF',
+          borderBottom: '2px solid #FFFFFF',
+          borderLeft: 'none',
+          borderRight: 'none',
+          boxSizing: 'border-box',
+          top: `${WAVE_TOP}px`,
+          left: '0px'
+        }}
+      >
+        <canvas 
+          ref={canvasRef} 
+          width={313} 
+          height={178}
+          onMouseDown={handleCanvasMouseDown}
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            cursor: isAltHeld ? 'crosshair' : 'default'
+          }}
+        />
+        {/* Zoom +/- BUTTONS - only visible on hover */}
+        <div 
+          className="zoom-buttons-container"
+          style={{
+            position: 'absolute',
+            width: '18px',
+            height: '39px',
+            top: `${ZOOM_BUTTONS_TOP - WAVE_TOP}px`,
+            right: `${ZOOM_BUTTONS_RIGHT}px`,
+            opacity: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px'
+          }}
+        >
+        {/* + BUTTON */}
+        <button
+          onClick={() => setZoom(z => Math.min(z * 2, 50000))}
+          style={{
+            width: '18px',
+            height: '18px',
+            border: '1px solid #FFFFFF',
+            boxSizing: 'border-box',
+            background: 'transparent',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            margin: 0,
+            mixBlendMode: 'difference',
+            cursor: 'pointer'
+          }}
+        >
+          <span style={{
+            fontFamily: 'Barlow Condensed',
+            fontWeight: 600,
+            fontSize: '14px',
+            color: '#FFFFFF',
+            lineHeight: 1
+          }}>
+            +
+          </span>
+        </button>
+
+        {/* - BUTTON */}
+        <button
+          onClick={() => setZoom(z => Math.max(z / 2, 1))}
+          style={{
+            width: '18px',
+            height: '18px',
+            border: '1px solid #FFFFFF',
+            boxSizing: 'border-box',
+            background: 'transparent',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            margin: 0,
+            mixBlendMode: 'difference',
+            cursor: 'pointer'
+          }}
+        >
+          <span style={{
+            fontFamily: 'Barlow Condensed',
+            fontWeight: 600,
+            fontSize: '14px',
+            color: '#FFFFFF',
+            lineHeight: 1
+          }}>
+            −
+          </span>
+        </button>
+        </div>
+      </div>
+
+      {/* Zoom Slider */}
+      <div 
+        style={{
+          position: 'absolute',
+          width: '313px',
+          height: '0px',
+          border: '1px solid #FFFFFF',
+          top: `${ZOOM_SLIDER_TOP}px`,
+          left: '0px',
+          cursor: 'pointer'
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const sliderElement = e.currentTarget;
+          const rect = sliderElement.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          
+          // Check if clicking on the handle (thicker part) or the track
+          const handleLeft = zoomSliderPosition;
+          const handleRight = zoomSliderPosition + zoomSliderWidth;
+          const isClickingHandle = clickX >= handleLeft && clickX <= handleRight;
+          
+          let dragStartX = clickX;
+          let dragStartOffset = effectiveOffset;
+          
+          const handleMouseMove = (moveEvent: MouseEvent) => {
+            moveEvent.preventDefault();
+            const moveRect = sliderElement.getBoundingClientRect();
+            const moveX = moveEvent.clientX - moveRect.left;
+            const deltaX = moveX - dragStartX;
+            
+            if (isClickingHandle) {
+              // Dragging the handle - scroll proportionally
+              const deltaPercent = deltaX / zoomSliderTotalWidth;
+              const deltaTime = deltaPercent * duration;
+              const newOffset = dragStartOffset + deltaTime;
+              setScrollOffset(Math.max(0, Math.min(newOffset, maxOffset)));
+            } else {
+              // Clicking on track - center view on clicked position
+              const normalizedX = Math.max(0, Math.min(1, moveX / zoomSliderTotalWidth));
+              const targetTime = normalizedX * duration;
+              // Center the view on the clicked position
+              const newOffset = Math.max(0, Math.min(targetTime - (viewDuration / 2), maxOffset));
+              setScrollOffset(newOffset);
+            }
+          };
+          
+          const handleMouseUp = () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+          };
+          
+          if (!isClickingHandle) {
+            // If clicking on track (not handle), immediately jump to position
+            const normalizedX = Math.max(0, Math.min(1, clickX / zoomSliderTotalWidth));
+            const targetTime = normalizedX * duration;
+            const newOffset = Math.max(0, Math.min(targetTime - (viewDuration / 2), maxOffset));
+            setScrollOffset(newOffset);
+          }
+          
+          window.addEventListener('mousemove', handleMouseMove);
+          window.addEventListener('mouseup', handleMouseUp);
+        }}
+      >
+        {/* Zoom Slider (Viewed section) - reactive to zooming and scrolling, draggable */}
+        <div 
+          style={{
+            position: 'absolute',
+            width: `${zoomSliderWidth}px`,
+            height: '0px',
+            border: '3px solid #FFFFFF',
+            top: '-3px',
+            left: `${zoomSliderPosition}px`,
+            cursor: 'grab'
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const handleElement = e.currentTarget;
+            const sliderElement = handleElement.parentElement;
+            if (!sliderElement) return;
+            
+            const sliderRect = sliderElement.getBoundingClientRect();
+            const handleRect = handleElement.getBoundingClientRect();
+            const dragStartX = e.clientX;
+            const dragStartOffset = effectiveOffset;
+            
+            const handleMouseMove = (moveEvent: MouseEvent) => {
+              moveEvent.preventDefault();
+              const deltaX = moveEvent.clientX - dragStartX;
+              const deltaPercent = deltaX / sliderRect.width;
+              const deltaTime = deltaPercent * duration;
+              const newOffset = dragStartOffset + deltaTime;
+              setScrollOffset(Math.max(0, Math.min(newOffset, maxOffset)));
+            };
+            
+            const handleMouseUp = () => {
+              window.removeEventListener('mousemove', handleMouseMove);
+              window.removeEventListener('mouseup', handleMouseUp);
+            };
+            
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+          }}
+        />
+        </div>
+
+      {/* ZOOM COUNTER */}
+      <div style={{
+        position: 'absolute',
+        fontFamily: 'Barlow Condensed',
+        fontStyle: 'normal',
+        fontWeight: 400,
+        fontSize: '10px',
+        lineHeight: '12px',
+        color: '#FFFFFF',
+        top: `${ZOOM_COUNTER_TOP}px`,
+        right: '0px',
+        whiteSpace: 'nowrap',
+        textAlign: 'right'
+      }}>
+        ZOOM: {zoom.toFixed(0)}
+      </div>
+
+      {/* Instructions - centered with slider */}
+      <div style={{
+        position: 'absolute',
+        top: `${INSTRUCTIONS_TOP}px`,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: '7px'
+      }}>
+        {/* ALT+CLICK: PLAY */}
+        <div style={{
+          width: '57px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 400,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: '#FFFFFF'
+        }}>
+          ALT+CLICK: PLAY
+        </div>
+
+        {/* TAB: SWITCH SLIDERS */}
+        <div style={{
+          width: '72px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 400,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: '#FFFFFF'
+        }}>
+          TAB: SWITCH SLIDERS
+        </div>
+
+        {/* PINCH: ZOOM */}
+        <div style={{
+          width: '44px',
+          height: '12px',
+          fontFamily: 'Barlow Condensed',
+          fontStyle: 'normal',
+          fontWeight: 400,
+          fontSize: '10px',
+          lineHeight: '12px',
+          color: '#FFFFFF'
+        }}>
+          PINCH: ZOOM
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default WaveformEditor;

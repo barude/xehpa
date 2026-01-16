@@ -1,0 +1,1 @@
+async function n(){return window.JSZip?window.JSZip:new Promise((o,t)=>{let i=0;const e=()=>{window.JSZip?o(window.JSZip):i<50?(i++,setTimeout(e,100)):t(new Error("JSZip failed to load from CDN"))};e()})}export{n as default};
