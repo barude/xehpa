@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { PadConfig } from '../types';
 
 interface PadGridProps {
@@ -10,6 +10,8 @@ interface PadGridProps {
 }
 
 const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, onPadClick }) => {
+  const [hoveredPadId, setHoveredPadId] = useState<number | null>(null);
+  
   return (
     <div 
       style={{
@@ -25,11 +27,16 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
     >
       {pads.map((pad) => {
         const isActive = activePadIds.has(pad.id);
+        const isHovered = hoveredPadId === pad.id;
+        // Show hover style when hovered but not when active (flashing)
+        const showHoverStyle = isHovered && !isActive;
         
         return (
           <button
             key={pad.id}
             onMouseDown={() => onPadClick(pad.id)}
+            onMouseEnter={() => setHoveredPadId(pad.id)}
+            onMouseLeave={() => setHoveredPadId(null)}
             className={isActive ? 'pad-active' : ''}
             style={{
               width: '96px',
@@ -37,7 +44,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
               border: 'none',
               outline: '2px solid #FFFFFF',
               outlineOffset: '-1px', // Center-aligned stroke: 1px inside, 1px outside
-              backgroundColor: '#000000',
+              backgroundColor: showHoverStyle ? '#FFFFFF' : '#000000',
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
@@ -56,7 +63,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
                   left: '4px',
                   width: '4px',
                   height: '4px',
-                  backgroundColor: isActive ? '#000000' : '#FFFFFF',
+                  backgroundColor: (isActive || showHoverStyle) ? '#000000' : '#FFFFFF',
                   borderRadius: '50%',
                   pointerEvents: 'none'
                 }}
@@ -77,7 +84,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
                 alignItems: 'center',
                 justifyContent: 'center',
                 textAlign: 'center',
-                color: isActive ? '#000000' : '#FFFFFF',
+                color: (isActive || showHoverStyle) ? '#000000' : '#FFFFFF',
                 textTransform: 'uppercase'
               }}
             >

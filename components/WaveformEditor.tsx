@@ -277,10 +277,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   // Instructions are 17px below zoom slider, centered
   const INSTRUCTIONS_TOP = ZOOM_SLIDER_TOP + 17; // 292
   
-  // Zoom +/- buttons: 7px from right, 8px down inside waveform container
-  const ZOOM_BUTTONS_RIGHT = 7;
-  const ZOOM_BUTTONS_TOP = WAVE_TOP + 8; // 71
-  
   // Calculate zoom slider position - reactive to zooming and scrolling
   const zoomSliderTotalWidth = 313; // Total slider width
   // The viewed section width is proportional to the zoom level
@@ -304,6 +300,19 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
     let isRendering = true;
 
+    // High-DPI canvas scaling for crisp waveforms
+    const dpr = window.devicePixelRatio || 1;
+    // Get actual display size from the rendered element
+    const displayWidth = canvas.clientWidth || 313;
+    const displayHeight = canvas.clientHeight || 174;
+    
+    // Set canvas buffer size to match display resolution
+    canvas.width = displayWidth * dpr;
+    canvas.height = displayHeight * dpr;
+    
+    // Scale context to account for DPR
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
     // Check if buffer has no meaningful audio (empty buffer)
     const hasNoAudio = sample.buffer.length <= 1 || duration <= 0.001;
 
@@ -312,20 +321,18 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const width = canvas.width;
-      const height = canvas.height;
-      const amp = height / 2;
+      const amp = displayHeight / 2;
 
       ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillRect(0, 0, displayWidth, displayHeight);
 
       ctx.strokeStyle = '#09090b';
       ctx.lineWidth = 1;
       for (let i = 0; i <= 20; i++) {
-        const gx = (i / 20) * width;
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke();
+        const gx = (i / 20) * displayWidth;
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, displayHeight); ctx.stroke();
       }
-      ctx.beginPath(); ctx.moveTo(0, amp); ctx.lineTo(width, amp); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, amp); ctx.lineTo(displayWidth, amp); ctx.stroke();
 
       // If there's no audio, just draw a static horizontal line in the middle
       if (hasNoAudio) {
@@ -333,7 +340,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(0, amp);
-        ctx.lineTo(width, amp);
+        ctx.lineTo(displayWidth, amp);
         ctx.stroke();
       } else {
         const data = sample.buffer.getChannelData(0);
@@ -341,13 +348,19 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         const endSampleIdx = Math.floor(((effectiveOffset + viewDuration) / duration) * data.length);
         const samplesInView = endSampleIdx - startSampleIdx;
 
-        // High-quality waveform rendering - white color, matching old code algorithm
+        // High-quality waveform rendering with subpixel precision
         ctx.strokeStyle = '#FFFFFF';
         ctx.lineWidth = 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.beginPath();
-        for (let i = 0; i < width; i++) {
-          const s1 = startSampleIdx + Math.floor((i / width) * samplesInView);
-          const s2 = startSampleIdx + Math.floor(((i + 1) / width) * samplesInView);
+        
+        // Use more sample points for smoother rendering on high-DPI displays
+        const renderWidth = displayWidth * dpr;
+        for (let i = 0; i < renderWidth; i++) {
+          const normalizedI = i / dpr;
+          const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
+          const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
           if (s1 >= data.length) break;
           let min = 1.0, max = -1.0;
           const actualS2 = Math.max(s1 + 1, s2);
@@ -356,8 +369,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
             if (datum < min) min = datum;
             if (datum > max) max = datum;
           }
-          ctx.moveTo(i, (1 + min) * amp);
-          ctx.lineTo(i, (1 + max) * amp);
+          ctx.moveTo(normalizedI, (1 + min) * amp);
+          ctx.lineTo(normalizedI, (1 + max) * amp);
         }
         ctx.stroke();
       }
@@ -370,16 +383,16 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         return;
       }
 
-      const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * width;
+      const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
       const startX = timeToX(start);
       const endX = timeToX(end);
 
       // Invert colors in selected section
-      if (startX < width && endX > 0) {
+      if (startX < displayWidth && endX > 0) {
         const previousCompositeOp = ctx.globalCompositeOperation;
         ctx.globalCompositeOperation = 'difference';
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(Math.max(0, startX), 0, Math.min(width, endX) - Math.max(0, startX), height);
+        ctx.fillRect(Math.max(0, startX), 0, Math.min(displayWidth, endX) - Math.max(0, startX), displayHeight);
         ctx.globalCompositeOperation = previousCompositeOp;
       }
 
@@ -415,12 +428,12 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           }
           
           const phX = timeToX(phTime);
-          if (phX >= 0 && phX <= width) {
+          if (phX >= 0 && phX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
             ctx.globalCompositeOperation = prevOp;
           }
         }
@@ -442,13 +455,13 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           isPreviewingRef.current = false;
         } else if (phTime <= duration && (!isLoopingPreview || phTime <= end + 0.1)) {
           const ghX = timeToX(phTime);
-          if (ghX >= 0 && ghX <= width) {
+          if (ghX >= 0 && ghX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
-            ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
             ctx.setLineDash([]);
             ctx.globalCompositeOperation = prevOp;
           }
@@ -457,14 +470,14 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
       // Draw S and E markers
       const drawMarker = (x: number, label: 'S' | 'E', isFocus: boolean) => {
-        if (x < -20 || x > width + 20) return;
+        if (x < -20 || x > displayWidth + 20) return;
         
         // Draw solid black vertical line
         ctx.strokeStyle = '#000000';
         ctx.lineWidth = 2;
         ctx.beginPath(); 
         ctx.moveTo(x, 0); 
-        ctx.lineTo(x, height); 
+        ctx.lineTo(x, displayHeight); 
         ctx.stroke();
         
         // Draw black rectangular handle with white text
@@ -485,14 +498,14 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           ctx.fillText(label, x + handleWidth / 2, handleHeight / 2);
         } else {
           // E handle: bottom left of the line (pointing into selection)
-          ctx.fillRect(x - handleWidth, height - handleHeight, handleWidth, handleHeight);
+          ctx.fillRect(x - handleWidth, displayHeight - handleHeight, handleWidth, handleHeight);
           
           // White E text
           ctx.fillStyle = '#FFFFFF';
           ctx.font = '600 11px Barlow Condensed';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(label, x - handleWidth / 2, height - handleHeight / 2);
+          ctx.fillText(label, x - handleWidth / 2, displayHeight - handleHeight / 2);
         }
       };
 
@@ -767,8 +780,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       >
         <canvas 
           ref={canvasRef} 
-          width={313} 
-          height={178}
           onMouseDown={handleCanvasMouseDown}
           style={{
             width: '100%',
@@ -777,79 +788,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
             cursor: isAltHeld ? 'crosshair' : 'default'
           }}
         />
-        {/* Zoom +/- BUTTONS - only visible on hover */}
-        <div 
-          className="zoom-buttons-container"
-          style={{
-            position: 'absolute',
-            width: '18px',
-            height: '39px',
-            top: `${ZOOM_BUTTONS_TOP - WAVE_TOP}px`,
-            right: `${ZOOM_BUTTONS_RIGHT}px`,
-            opacity: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '3px'
-          }}
-        >
-        {/* + BUTTON */}
-        <button
-          onClick={() => setZoom(z => Math.min(z * 2, 50000))}
-          style={{
-            width: '18px',
-            height: '18px',
-            border: '1px solid #FFFFFF',
-            boxSizing: 'border-box',
-            background: 'transparent',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 0,
-            margin: 0,
-            mixBlendMode: 'difference',
-            cursor: 'pointer'
-          }}
-        >
-          <span style={{
-            fontFamily: 'Barlow Condensed',
-            fontWeight: 600,
-            fontSize: '14px',
-            color: '#FFFFFF',
-            lineHeight: 1
-          }}>
-            +
-          </span>
-        </button>
-
-        {/* - BUTTON */}
-        <button
-          onClick={() => setZoom(z => Math.max(z / 2, 1))}
-          style={{
-            width: '18px',
-            height: '18px',
-            border: '1px solid #FFFFFF',
-            boxSizing: 'border-box',
-            background: 'transparent',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 0,
-            margin: 0,
-            mixBlendMode: 'difference',
-            cursor: 'pointer'
-          }}
-        >
-          <span style={{
-            fontFamily: 'Barlow Condensed',
-            fontWeight: 600,
-            fontSize: '14px',
-            color: '#FFFFFF',
-            lineHeight: 1
-          }}>
-            −
-          </span>
-        </button>
-        </div>
       </div>
 
       {/* Zoom Slider */}

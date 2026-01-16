@@ -45,6 +45,11 @@ const Knob: React.FC<KnobProps> = ({
   const isDragging = useRef(false);
   const dragStartY = useRef(0);
   const dragStartValue = useRef(0);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isActive, setIsActive] = useState(false);
+  
+  // Visual state is active when hovered OR being interacted with
+  const showActiveState = isHovered || isActive;
 
   const config = SIZE_CONFIG[size];
   const { diameter, indicatorLength, strokeWidth } = config;
@@ -70,6 +75,7 @@ const Knob: React.FC<KnobProps> = ({
     (e: React.MouseEvent) => {
       e.preventDefault();
       isDragging.current = true;
+      setIsActive(true);
       dragStartY.current = e.clientY;
       dragStartValue.current = value;
       document.body.style.cursor = 'ns-resize';
@@ -109,6 +115,7 @@ const Knob: React.FC<KnobProps> = ({
       e.stopPropagation();
       
       isDragging.current = false;
+      setIsActive(false);
       document.body.style.cursor = '';
       // Clear hover state when dragging stops
       onHover?.(false, null);
@@ -153,12 +160,14 @@ const Knob: React.FC<KnobProps> = ({
   }, [value, step, clampValue, onChange, onHover]);
 
   const handleMouseEnter = useCallback(() => {
+    setIsHovered(true);
     if (!isDragging.current) {
       onHover?.(true, value);
     }
   }, [onHover, value]);
 
   const handleMouseLeave = useCallback(() => {
+    setIsHovered(false);
     if (!isDragging.current) {
       onHover?.(false, null);
     }
@@ -233,6 +242,7 @@ const Knob: React.FC<KnobProps> = ({
         onMouseDown={handleMouseDown}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        onWheel={handleWheel}
         className="cursor-ns-resize"
         style={{ width: diameter, height: diameter }}
       >
@@ -242,9 +252,10 @@ const Knob: React.FC<KnobProps> = ({
             cx={center}
             cy={center}
             r={center - strokeWidth}
-            fill="transparent"
+            fill={showActiveState ? '#FFFFFF' : 'transparent'}
             stroke="#FFFFFF"
             strokeWidth={strokeWidth}
+            style={{ transition: 'fill 0.1s ease' }}
           />
           {/* Indicator line - from center outward */}
           <line
@@ -252,9 +263,10 @@ const Knob: React.FC<KnobProps> = ({
             y1={center}
             x2={lineEndX}
             y2={lineEndY}
-            stroke="#FFFFFF"
+            stroke={showActiveState ? '#000000' : '#FFFFFF'}
             strokeWidth={strokeWidth}
             strokeLinecap="round"
+            style={{ transition: 'stroke 0.1s ease' }}
           />
         </svg>
       </div>

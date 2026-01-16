@@ -5,7 +5,7 @@ import { deleteSampleFromDB } from '../services/db';
 interface SampleLibraryProps {
   samples: SampleData[];
   onLoadSample: () => void;
-  onSampleSelect: (sampleId: string) => void;
+  onSampleSelect: (sampleId: string | null) => void;
   selectedSampleId: string | null;
   onSamplesChange: (samples: SampleData[]) => void;
 }
@@ -195,7 +195,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
           return (
             <div
               key={sample.id}
-              onClick={() => onSampleSelect(sample.id)}
+              onClick={() => onSampleSelect(isSelected ? null : sample.id)}
               onMouseEnter={() => setHoveredSampleId(sample.id)}
               onMouseLeave={() => setHoveredSampleId(null)}
               style={{

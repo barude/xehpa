@@ -700,12 +700,12 @@ export default function App() {
 
   const duplicatePattern = () => {
     const source = patterns.find(p => p.id === currentPatternId) || patterns[0];
-    const newP = { ...source, id: randomUUID(), name: `${source.name} Copy` };
+    const newP = { ...source, id: randomUUID(), name: `${source.name} Copy`.slice(0, 15) };
     setPatterns([...patterns, newP]);
     setCurrentPatternId(newP.id);
   };
 
-  const renamePattern = (id: string, newName: string) => setPatterns(prev => prev.map(p => p.id === id ? { ...p, name: newName } : p));
+  const renamePattern = (id: string, newName: string) => setPatterns(prev => prev.map(p => p.id === id ? { ...p, name: newName.slice(0, 15) } : p));
   const deletePattern = (id: string) => {
     if (patterns.length <= 1) return;
     const nextPatterns = patterns.filter(p => p.id !== id);
@@ -1306,12 +1306,12 @@ export default function App() {
                     )}
                     
                     <div 
-                      className={`relative border-2 transition-none ${isSelected ? 'bg-white border-white' : 'border-white bg-transparent'} ${draggedStepIdx === idx ? 'opacity-30' : 'opacity-100'}`}
+                      className={`relative border-2 transition-none ${isSelected ? 'bg-white border-white' : 'border-white bg-transparent hover:bg-white'} ${draggedStepIdx === idx ? 'opacity-30' : 'opacity-100'} group/section`}
                       style={{ marginTop: idx === 0 ? 0 : 5, minHeight: isExpanded ? 'auto' : 35 }}
                     >
                       {/* Vertical divider line - spans from top border to horizontal divider */}
                       <div 
-                        className={`absolute w-[2px] ${isSelected ? 'bg-black' : 'bg-white'}`} 
+                        className={`absolute w-[2px] ${isSelected ? 'bg-black' : 'bg-white group-hover/section:bg-black'}`} 
                         style={{ right: '42px', top: '-2px', height: '35px' }} 
                       />
                       
@@ -1324,7 +1324,7 @@ export default function App() {
                         onDragEnd={() => { setDraggedStepIdx(null); setDropIndicatorIdx(null); }}
                         onClick={() => setCurrentSongStepIdx(idx)}
                       >
-                        <span className={`w-4 text-center font-light text-[6px] ${isSelected ? 'text-black' : 'text-white'}`} style={{ fontFamily: 'Barlow Condensed' }}>
+                        <span className={`w-4 text-center font-light text-[6px] ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} style={{ fontFamily: 'Barlow Condensed' }}>
                           {idx + 1}
                         </span>
                         
@@ -1336,11 +1336,11 @@ export default function App() {
                               onChange={e => renameStep(step.id, e.target.value)} 
                               onKeyDown={e => e.key === 'Enter' && setEditingStepId(null)}
                               onClick={e => e.stopPropagation()}
-                              className={`bg-transparent text-[10px] uppercase outline-none w-full font-medium ${isSelected ? 'text-black' : 'text-white'}`}
+                              className={`bg-transparent text-[10px] uppercase outline-none w-full font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed' }}
                             />
                           ) : (
-                            <span className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white'}`} style={{ fontFamily: 'Barlow Condensed' }}>
+                            <span className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} style={{ fontFamily: 'Barlow Condensed' }}>
                               {step.name}
                             </span>
                           )}
@@ -1357,21 +1357,21 @@ export default function App() {
                                 setIsSectionLoopActive(true);
                               }
                             }}
-                            className={`w-[25px] h-[21px] border-2 transition-none flex items-center justify-center flex-shrink-0 ${isSelected && isSectionLoopActive ? 'bg-black border-black' : isSelected ? 'border-black bg-transparent' : 'border-white bg-transparent'}`}
+                            className={`w-[25px] h-[21px] border-2 transition-none flex items-center justify-center flex-shrink-0 ${isSelected && isSectionLoopActive ? 'bg-black border-black' : isSelected ? 'border-black bg-transparent' : 'border-white bg-transparent group-hover/section:border-black'}`}
                           >
-                            <svg viewBox="0 0 24 24" className={`w-3 h-3 ${isSelected && isSectionLoopActive ? 'fill-white' : isSelected ? 'fill-black' : 'fill-white'}`}>
+                            <svg viewBox="0 0 24 24" className={`w-3 h-3 ${isSelected && isSectionLoopActive ? 'fill-white' : isSelected ? 'fill-black' : 'fill-white group-hover/section:fill-black'}`}>
                               <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
                 </button>
                           
-                          <div className={`w-[25px] h-[21px] border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-black' : 'border-white'}`}>
+                          <div className={`w-[25px] h-[21px] border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black'}`}>
                             <input 
                               type="number" 
                               min="1" 
                               value={step.repeats} 
                               onClick={e => e.stopPropagation()}
                               onChange={(e) => setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, repeats: parseInt(e.target.value) || 1 } : s) : arr))}
-                              className={`w-full h-full bg-transparent text-[10px] text-center outline-none font-medium ${isSelected ? 'text-black' : 'text-white'}`}
+                              className={`w-full h-full bg-transparent text-[10px] text-center outline-none font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed' }}
                             />
             </div>
@@ -1384,7 +1384,7 @@ export default function App() {
                               e.stopPropagation(); 
                               setEditingStepId(isExpanded ? null : step.id); 
                             }}
-                            className={`text-[10px] uppercase font-medium flex items-center gap-[3px] flex-shrink-0 ${isSelected ? 'text-black' : 'text-white'}`}
+                            className={`text-[10px] uppercase font-medium flex items-center gap-[3px] flex-shrink-0 ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                             style={{ fontFamily: 'Barlow Condensed' }}
                           >
                             <span>{isExpanded ? '▲' : '▼'}</span>
@@ -1394,9 +1394,9 @@ export default function App() {
             </div>
             
                       {isExpanded && (
-                        <div className={`border-t-2 ${isSelected ? 'border-black' : 'border-white'}`} style={{ width: 'calc(100% + 4px)', marginLeft: '-2px' }}>
-                          <div className="px-[16px] pt-[18px] pb-[12px] max-h-[90px] overflow-y-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-                            <div className="grid grid-cols-2 gap-x-[10px] gap-y-[6px]">
+                        <div className={`border-t-2 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black group-hover/section:bg-white'}`} style={{ width: 'calc(100% + 4px)', marginLeft: '-2px' }}>
+                          <div className="px-[16px] pt-[18px] pb-[2px] max-h-[78px] overflow-y-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                            <div className="grid grid-cols-2 gap-x-[10px] gap-y-[2px]">
                               {patterns.map(p => {
                                 const isActive = step.activePatternIds.includes(p.id);
                                 const isArmed = step.armedPatternId === p.id;
@@ -1404,7 +1404,7 @@ export default function App() {
                                 return (
                                   <div 
                                     key={p.id}
-                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white') : isSelected ? 'bg-transparent border-black' : 'bg-transparent border-white'}`}
+                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black') : isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-white group-hover/section:border-black'}`}
                                     onClick={() => {
                                       setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => {
                                         if (s.id !== step.id) return s;
@@ -1418,14 +1418,14 @@ export default function App() {
                                     }}
                                   >
                                     <span 
-                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive ? (isSelected ? 'text-white' : 'text-black') : isSelected ? 'text-black' : 'text-white'}`}
+                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive ? (isSelected ? 'text-white' : 'text-black group-hover/section:text-white') : isSelected ? 'text-black group-hover/pattern:text-white' : 'text-white group-hover/section:text-black group-hover/pattern:text-black'}`}
                                       style={{ fontFamily: 'Barlow Condensed' }}
                                     >
                                       {p.name}
                                     </span>
                                     {isActive && (
                                       <div 
-                                        className={`w-[8px] h-[8px] rounded-full flex-shrink-0 cursor-pointer ${isArmed ? (isSelected ? 'bg-white' : 'bg-black') : (isSelected ? 'border-[1.5px] border-white bg-transparent' : 'border-[1.5px] border-black bg-transparent')}`}
+                                        className={`w-[8px] h-[8px] rounded-full flex-shrink-0 cursor-pointer ${isArmed ? (isSelected ? 'bg-white' : 'bg-black group-hover/section:bg-white') : (isSelected ? 'border-[1.5px] border-white bg-transparent' : 'border-[1.5px] border-black bg-transparent group-hover/section:border-white')}`}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, armedPatternId: p.id } : s) : arr));
@@ -1443,7 +1443,7 @@ export default function App() {
                               onClick={() => {
                                 setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? [...arr.slice(0, idx + 1), { ...step, id: randomUUID() }, ...arr.slice(idx + 1)] : arr));
                               }}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black'}`}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
                               DUPLICATE
@@ -1458,7 +1458,7 @@ export default function App() {
                                   setEditingStepId(null);
                                 }
                               }}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black'}`}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
                               DELETE
@@ -1769,6 +1769,7 @@ export default function App() {
                     {editingPatternId === p.id ? (
                          <input 
                            autoFocus 
+                           maxLength={15}
                            className="pattern-edit-input"
                            style={{
                              width: '91px',
@@ -1872,6 +1873,7 @@ export default function App() {
                        {editingPatternId === p.id ? (
                          <input 
                            autoFocus 
+                           maxLength={15}
                            className="pattern-edit-input"
                            style={{
                              width: '91px',
@@ -1975,6 +1977,7 @@ export default function App() {
                        {editingPatternId === p.id ? (
                          <input 
                            autoFocus 
+                           maxLength={15}
                            className="pattern-edit-input"
                            style={{
                              width: '91px',
@@ -2105,7 +2108,7 @@ export default function App() {
           </div>
 
           {/* Current Time Segment Display - 14px below buttons (buttons end at 52px from top, so this starts at 66px) */}
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '29px' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '34px' }}>
             <SegmentDisplay value={formatTimeForDisplay(currentSongTime)} size="large" />
           </div>
 
@@ -2131,7 +2134,12 @@ export default function App() {
         <div style={{ flexShrink: 0, paddingTop: '36px', marginLeft: '56px' }} className="flex flex-col pb-3">
           <PadGrid pads={currentBankPads} activePadIds={activePadIds} selectedPadId={selectedPadId} onPadClick={(id) => { 
             if (selectedPadId !== id) { stopPreview(); }
-            setSelectedPadId(id); 
+            setSelectedPadId(id);
+            // Also select the pad's sample in the library
+            const pad = pads.find(p => p.id === id);
+            if (pad?.sampleId) {
+              setSelectedSampleId(pad.sampleId);
+            }
             triggerPad(id); 
           }} />
         </div>
@@ -2339,16 +2347,24 @@ export default function App() {
               input.click();
             }}
             onSampleSelect={(sampleId) => {
-              setSelectedSampleId(sampleId);
-              // If a pad is selected, assign the sample to it
-              if (selectedPadId !== null) {
-                const sample = samples.find(s => s.id === sampleId);
-                if (sample) {
-                  setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, sampleId: sampleId, start: 0, end: sample.buffer.duration } : p));
+              if (sampleId === null) {
+                // Deselecting - clear sample selection and unassign from pad
+                setSelectedSampleId(null);
+                if (selectedPadId !== null) {
+                  setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, sampleId: null, start: 0, end: 0 } : p));
+                }
+              } else {
+                setSelectedSampleId(sampleId);
+                // If a pad is selected, assign the sample to it
+                if (selectedPadId !== null) {
+                  const sample = samples.find(s => s.id === sampleId);
+                  if (sample) {
+                    setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, sampleId: sampleId, start: 0, end: sample.buffer.duration } : p));
+                  }
                 }
               }
             }}
-            selectedSampleId={selectedPadId !== null ? pads.find(p => p.id === selectedPadId)?.sampleId || selectedSampleId : selectedSampleId}
+            selectedSampleId={selectedSampleId}
             onSamplesChange={(newSamples) => {
               setSamples(newSamples);
               // Clear selectedSampleId if the selected sample was deleted

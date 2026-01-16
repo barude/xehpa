@@ -97,8 +97,20 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
     }
   }, []);
 
-  const formatKnobValue = (knobId: string, value: number): string => {
+  const formatKnobValue = (knobId: string, value: number | string): string => {
     // All values must be exactly 4 characters for the display
+    // Handle filterType case first (it's a string)
+    if (knobId === 'filterType') {
+      if (typeof value === 'string') {
+        return value.toUpperCase().padEnd(4, ' ');
+      }
+      return '    ';
+    }
+    // All other cases expect a number
+    if (typeof value !== 'number') {
+      return '    ';
+    }
+    
     switch (knobId) {
       case 'pitch':
         // Format: " 12" or "-12" or "  0"
@@ -152,12 +164,6 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
       case 'res':
         // Format: "15.0" or " 0.0"
         return value.toFixed(1).padStart(4, ' ');
-      case 'filterType':
-        // Format: "LP  " or "HP  " or "BP  "
-        if (typeof value === 'string') {
-          return value.toUpperCase().padEnd(4, ' ');
-        }
-        return '    ';
       default:
         return value.toFixed(2).padStart(4, ' ');
     }
