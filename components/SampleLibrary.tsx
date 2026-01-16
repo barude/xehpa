@@ -18,6 +18,12 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
   onSamplesChange
 }) => {
   const [hoveredSampleId, setHoveredSampleId] = useState<string | null>(null);
+  
+  // #region agent log
+  React.useEffect(() => {
+    fetch('http://127.0.0.1:7246/ingest/2d98c556-ea4c-4e36-aeb0-8a0a74512641',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:21',message:'SampleLibrary: received samples prop',data:{count:samples.length,order:samples.map((s,i)=>({index:i,id:s.id,name:s.name}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  }, [samples]);
+  // #endregion
 
   const handleDelete = async (sampleId: string, e: React.MouseEvent) => {
     e.stopPropagation();
