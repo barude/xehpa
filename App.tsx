@@ -1295,7 +1295,7 @@ export default function App() {
               scrollbarWidth: 'none', 
               msOverflowStyle: 'none',
               position: 'absolute',
-              top: '44px', // Aligned with PadGrid top
+              top: '49px', // Aligned with PadGrid top
               bottom: '52px', // 341px from frame bottom = 492px from top, 492 - 157 = 335px from container top, 387 - 335 = 52px from container bottom
               left: '29px',
               width: '317px'
