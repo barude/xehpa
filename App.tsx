@@ -2281,7 +2281,7 @@ export default function App() {
             };
             
             const activeSample = sample || emptySample;
-            const activePad = pad || { start: 0, end: 0.001, isReversed: false, playMode: 'POLY' as const };
+            const activePad = pad || { start: 0, end: 0.001, isReversed: false, playMode: 'MONO' as const };
             
             return (
               <WaveformEditor 

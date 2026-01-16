@@ -4,9 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>xehpa</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
     <!-- Tailwind CSS CDN - Development only, suppress production warning -->
     <script>
       // Suppress Tailwind CDN production warning in development
+      const originalWarn = console.warn;
+      console.warn = function(...args) {
+        if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com should not be used in production')) {
+          return; // Suppress this specific warning
+        }
+        originalWarn.apply(console, args);
+      };
       window.tailwindConfig = {
         corePlugins: {
           preflight: false,
@@ -45,11 +53,13 @@
         }
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { 
-            -webkit-appearance: none; 
+            -webkit-appearance: none;
+            appearance: none;
             margin: 0; 
         }
         input[type=range] {
             -webkit-appearance: none;
+            appearance: none;
             background: transparent;
         }
         input[type=range]::-webkit-slider-runnable-track {
@@ -137,10 +147,7 @@
             outline-offset: 2px;
         }
     </style>
-
-
-
-  <script type="module" crossorigin src="/xehpa/assets/index-pFCt9zRh.js"></script>
+  <script type="module" crossorigin src="/xehpa/assets/index-FpGTPWqg.js"></script>
 </head>
 <body>
     <div id="root"></div>

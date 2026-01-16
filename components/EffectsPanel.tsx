@@ -183,7 +183,7 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
     keyLabel: '',
     start: 0,
     end: 0.001,
-    playMode: 'POLY',
+    playMode: 'MONO',
     tune: 0,
     fineTune: 0,
     isReversed: false,

@@ -11,7 +11,7 @@ export function createBank(bankIdx: number): PadConfig[] {
   // decay: 0 (instant), sustain: 1 (full level), filterType: 'lowpass', filterEnv: 0 (no modulation)
   const defaultPad = (id: number, keyCode: string, keyLabel: string): PadConfig => ({
     id, sampleId: null, keyCode, keyLabel,
-    start: 0, end: 0, playMode: 'POLY',
+    start: 0, end: 0, playMode: 'MONO',
     tune: 0, fineTune: 0, isReversed: false,
     volume: 1, pan: 0,
     attack: 0.001, decay: 0, sustain: 1, release: 0.01,

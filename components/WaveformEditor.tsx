@@ -29,7 +29,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   onLoopStop,
   padId,
   isReversed = false,
-  playMode = 'POLY',
+  playMode = 'MONO',
   onToggleReverse,
   onTogglePlayMode
 }) => {
@@ -56,14 +56,20 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   const maxOffset = Math.max(0, duration - viewDuration);
   const effectiveOffset = Math.min(scrollOffset, maxOffset);
 
-  const HANDLE_PICK_RADIUS_PX = 40; 
+  const HANDLE_PICK_RADIUS_PX = 40;
+  const HANDLE_DIRECT_CLICK_RADIUS_PX = 20; // Smaller radius for direct clicks to switch sliders 
 
+  // Update functions that allow crossing - swap happens in mouse move handler
   const updateStart = useCallback((val: number) => {
-    onUpdate(Math.max(0, Math.min(val, end - 0.000001)), end);
-  }, [end, onUpdate]);
+    const clampedVal = Math.max(0, Math.min(val, duration));
+    // Allow crossing - no constraints
+    onUpdate(clampedVal, end);
+  }, [end, duration, onUpdate]);
 
   const updateEnd = useCallback((val: number) => {
-    onUpdate(start, Math.max(start + 0.000001, Math.min(val, duration)));
+    const clampedVal = Math.max(0, Math.min(val, duration));
+    // Allow crossing - no constraints
+    onUpdate(start, clampedVal);
   }, [start, duration, onUpdate]);
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -92,23 +98,67 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
     let target: 'start' | 'end' | null = null;
 
-    if (distToStart < HANDLE_PICK_RADIUS_PX && distToStart <= distToEnd) {
-      target = 'start';
-    } else if (distToEnd < HANDLE_PICK_RADIUS_PX) {
-      target = 'end';
+    // Check ranges with different thresholds
+    const isInStartPickRange = distToStart < HANDLE_PICK_RADIUS_PX;
+    const isInEndPickRange = distToEnd < HANDLE_PICK_RADIUS_PX;
+    const isDirectClickOnStart = distToStart < HANDLE_DIRECT_CLICK_RADIUS_PX;
+    const isDirectClickOnEnd = distToEnd < HANDLE_DIRECT_CLICK_RADIUS_PX;
+
+    // STRICT RULE: If the currently focused slider is in pick range, ALWAYS use it
+    // Only switch if the focused slider is NOT in range AND you click directly on the other one
+    if (focusMode === 'start') {
+      if (isInStartPickRange) {
+        // START is focused and in range - always use it
+        target = 'start';
+      } else if (isDirectClickOnEnd) {
+        // START is not in range, but clicked directly on END - switch to END
+        target = 'end';
+      }
+      // If neither condition is met, target stays null (will use focusMode below)
+    } else {
+      // focusMode === 'end'
+      if (isInEndPickRange) {
+        // END is focused and in range - always use it
+        target = 'end';
+      } else if (isDirectClickOnStart) {
+        // END is not in range, but clicked directly on START - switch to START
+        target = 'start';
+      }
+      // If neither condition is met, target stays null (will use focusMode below)
     }
 
     if (target) {
       setIsDragging(true);
       setDragTarget(target);
-      setFocusMode(target);
+      // Only update focus mode if switching to a different slider
+      if (target !== focusMode) {
+        setFocusMode(target);
+      }
     } else {
+      // Clicking away from both sliders - use the currently focused one
+      // Handle potential crossover when clicking
       if (focusMode === 'start') {
-        updateStart(timeAtX);
-        setDragTarget('start');
+        const newStart = Math.max(0, Math.min(timeAtX, duration));
+        if (newStart > end) {
+          // Crossed past end - swap
+          onUpdate(end, newStart);
+          setFocusMode('end');
+          setDragTarget('end');
+        } else {
+          updateStart(timeAtX);
+          setDragTarget('start');
+        }
       } else {
-        updateEnd(timeAtX);
-        setDragTarget('end');
+        const newEnd = Math.max(0, Math.min(timeAtX, duration));
+        if (newEnd < start) {
+          // Crossed past start - swap
+          onUpdate(newEnd, start);
+          setFocusMode('start');
+          setDragTarget('start');
+        } else {
+          updateEnd(timeAtX);
+          setDragTarget('end');
+        }
       }
       setIsDragging(true);
     }
@@ -119,8 +169,27 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const moveTime = effectiveOffset + moveNormX * viewDuration;
       
       const activeTarget = dragTarget || focusMode;
-      if (activeTarget === 'start') updateStart(moveTime);
-      else updateEnd(moveTime);
+      if (activeTarget === 'start') {
+        const newStart = Math.max(0, Math.min(moveTime, duration));
+        // Check if crossing past end - if so, swap values and focus
+        if (newStart > end) {
+          onUpdate(end, newStart);
+          setFocusMode('end');
+          setDragTarget('end');
+        } else {
+          updateStart(moveTime);
+        }
+      } else {
+        const newEnd = Math.max(0, Math.min(moveTime, duration));
+        // Check if crossing past start - if so, swap values and focus
+        if (newEnd < start) {
+          onUpdate(newEnd, start);
+          setFocusMode('start');
+          setDragTarget('start');
+        } else {
+          updateEnd(moveTime);
+        }
+      }
     };
 
     const handleMouseUp = () => {
@@ -224,12 +293,15 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
       if (onLoopStop) onLoopStop();
     } else {
-      // Validate start/end before looping
-      if (start >= end || end - start < 0.001) {
+      // Validate start/end before looping - handle crossed sliders
+      const loopDur = Math.abs(end - start);
+      if (loopDur < 0.001) {
         console.warn('Cannot start loop: invalid start/end range', { start, end });
         return;
       }
-      runPreviewAt(start, true);
+      // Always start from the leftmost position
+      const leftPos = Math.min(start, end);
+      runPreviewAt(leftPos, true);
     }
   };
 
@@ -386,13 +458,19 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
       const startX = timeToX(start);
       const endX = timeToX(end);
+      
+      // Calculate leftmost and rightmost positions (handle crossed sliders)
+      const leftPos = Math.min(start, end);
+      const rightPos = Math.max(start, end);
+      const leftX = timeToX(leftPos);
+      const rightX = timeToX(rightPos);
 
-      // Invert colors in selected section
-      if (startX < displayWidth && endX > 0) {
+      // Invert colors in selected section (always between leftmost and rightmost)
+      if (leftX < displayWidth && rightX > 0) {
         const previousCompositeOp = ctx.globalCompositeOperation;
         ctx.globalCompositeOperation = 'difference';
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(Math.max(0, startX), 0, Math.min(displayWidth, endX) - Math.max(0, startX), displayHeight);
+        ctx.fillRect(Math.max(0, leftX), 0, Math.min(displayWidth, rightX) - Math.max(0, leftX), displayHeight);
         ctx.globalCompositeOperation = previousCompositeOp;
       }
 
@@ -444,10 +522,12 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         let phTime = previewPositionRef.current + elapsed;
         
         if (isLoopingPreview) {
-          const loopDur = end - start;
+          // Handle crossed sliders: loop duration is always positive
+          const loopDur = Math.abs(end - start);
           if (loopDur > 0) {
             const timeInLoop = (elapsed % (loopDur / 1));
-            phTime = start + timeInLoop;
+            const leftPos = Math.min(start, end);
+            phTime = leftPos + timeInLoop;
           }
         }
 
@@ -469,29 +549,38 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       }
 
       // Draw S and E markers
+      // Always show S on left, E on right, but determine focus based on which value matches focusMode
       const drawMarker = (x: number, label: 'S' | 'E', isFocus: boolean) => {
         if (x < -20 || x > displayWidth + 20) return;
         
-        // Draw solid black vertical line
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
+        // Draw vertical line - thicker and white when focused
+        ctx.strokeStyle = isFocus ? '#FFFFFF' : '#000000';
+        ctx.lineWidth = isFocus ? 3 : 2;
         ctx.beginPath(); 
         ctx.moveTo(x, 0); 
         ctx.lineTo(x, displayHeight); 
         ctx.stroke();
         
-        // Draw black rectangular handle with white text
+        // Draw rectangular handle - white background when focused, black when not
         const handleWidth = 14;
         const handleHeight = 16;
         
-        ctx.fillStyle = '#000000';
+        // Handle background color based on focus
+        ctx.fillStyle = isFocus ? '#FFFFFF' : '#000000';
         
         if (label === 'S') {
           // S handle: top right of the line (pointing into selection)
           ctx.fillRect(x, 0, handleWidth, handleHeight);
           
-          // White S text
-          ctx.fillStyle = '#FFFFFF';
+          // Add white outline when focused for extra visibility
+          if (isFocus) {
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, 0, handleWidth, handleHeight);
+          }
+          
+          // Text color: black when focused (on white background), white when not (on black background)
+          ctx.fillStyle = isFocus ? '#000000' : '#FFFFFF';
           ctx.font = '600 11px Barlow Condensed';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -500,8 +589,15 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           // E handle: bottom left of the line (pointing into selection)
           ctx.fillRect(x - handleWidth, displayHeight - handleHeight, handleWidth, handleHeight);
           
-          // White E text
-          ctx.fillStyle = '#FFFFFF';
+          // Add white outline when focused for extra visibility
+          if (isFocus) {
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - handleWidth, displayHeight - handleHeight, handleWidth, handleHeight);
+          }
+          
+          // Text color: black when focused (on white background), white when not (on black background)
+          ctx.fillStyle = isFocus ? '#000000' : '#FFFFFF';
           ctx.font = '600 11px Barlow Condensed';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -509,8 +605,16 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         }
       };
 
-      drawMarker(startX, 'S', focusMode === 'start');
-      drawMarker(endX, 'E', focusMode === 'end');
+      // Determine which marker is focused based on focusMode and actual positions
+      // If start > end, then start is on the right, end is on the left
+      const isStartOnLeft = start <= end;
+      const leftMarkerLabel: 'S' | 'E' = isStartOnLeft ? 'S' : 'E';
+      const rightMarkerLabel: 'S' | 'E' = isStartOnLeft ? 'E' : 'S';
+      const leftMarkerFocused = (isStartOnLeft && focusMode === 'start') || (!isStartOnLeft && focusMode === 'end');
+      const rightMarkerFocused = (isStartOnLeft && focusMode === 'end') || (!isStartOnLeft && focusMode === 'start');
+
+      drawMarker(leftX, leftMarkerLabel, leftMarkerFocused);
+      drawMarker(rightX, rightMarkerLabel, rightMarkerFocused);
 
       if (isRendering) {
         animationRef.current = requestAnimationFrame(render);
@@ -562,10 +666,13 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           width: '31px',
           height: '17px',
           background: focusMode === 'start' ? '#FFFFFF' : 'transparent',
-          border: focusMode === 'start' ? 'none' : '2px solid #FFFFFF',
+          border: '2px solid #FFFFFF',
           boxSizing: 'border-box',
           top: `${BUTTONS_TOP}px`,
-          left: `${START_LEFT}px`
+          left: `${START_LEFT}px`,
+          // Add subtle transition for smoother visual feedback
+          transition: 'background-color 0.1s ease',
+          cursor: 'pointer'
         }}
       >
         <span style={{
@@ -597,7 +704,10 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           boxSizing: 'border-box',
           background: focusMode === 'end' ? '#FFFFFF' : 'transparent',
           top: `${BUTTONS_TOP}px`,
-          left: `${END_LEFT}px`
+          left: `${END_LEFT}px`,
+          // Add subtle transition for smoother visual feedback
+          transition: 'background-color 0.1s ease',
+          cursor: 'pointer'
         }}
       >
         <span style={{

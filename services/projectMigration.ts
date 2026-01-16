@@ -55,7 +55,7 @@ const createDefaultPad = (id: number, keyCode: string, keyLabel: string): PadCon
   keyLabel,
   start: 0,
   end: 0,
-  playMode: 'POLY',
+  playMode: 'MONO',
   tune: 0,
   fineTune: 0,
   isReversed: false,
