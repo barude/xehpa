@@ -334,8 +334,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   // PAD number is 10px above reverse button
   const PAD_TOP = BUTTONS_TOP - 10 - 12; // 8
   
-  // Zoom slider is 34px below waveform
-  const ZOOM_SLIDER_TOP = WAVE_BOTTOM + 34; // 275
+  // Zoom slider is 32px below waveform
+  const ZOOM_SLIDER_TOP = WAVE_BOTTOM + 32; // 273
   // Zoom counter is 7px above zoom slider, right-aligned with slider
   const ZOOM_COUNTER_TOP = ZOOM_SLIDER_TOP - 7 - 12; // 256
   // Instructions are 17px below zoom slider, centered
@@ -350,11 +350,12 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
     ? Math.max(10, Math.min(zoomSliderTotalWidth, (viewDuration / duration) * zoomSliderTotalWidth))
     : zoomSliderTotalWidth; // When fully zoomed out, slider takes full width
   
-  // Calculate position: when at start (offset=0), position should be 0
-  // When at end (offset=maxOffset), position should be (totalWidth - sliderWidth)
+  // Calculate position: when at start (offset=0), position should be -1px to account for border
+  // When at end (offset=maxOffset), position should be (totalWidth - sliderWidth - 1)
+  // Always offset by -1px so handle's 2px border edge aligns with track's left edge
   const zoomSliderPosition = duration > 0 && maxOffset > 0
-    ? (effectiveOffset / maxOffset) * (zoomSliderTotalWidth - zoomSliderWidth)
-    : 0;
+    ? (effectiveOffset / maxOffset) * (zoomSliderTotalWidth - zoomSliderWidth) - 1
+    : -1; // -1px to align handle border with track left edge when fully zoomed out
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -910,8 +911,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
             position: 'absolute',
             width: `${zoomSliderWidth}px`,
             height: '0px',
-            border: '3px solid #FFFFFF',
-            top: '-3px',
+            border: '2px solid #FFFFFF',
+            top: '-2px',
             left: `${zoomSliderPosition}px`,
             cursor: 'grab'
           }}
