@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SampleData } from '../types';
 import { deleteSampleFromDB } from '../services/db';
+import { useHint } from './HintDisplay';
 
 interface SampleLibraryProps {
   samples: SampleData[];
@@ -18,6 +19,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
   onSamplesChange
 }) => {
   const [hoveredSampleId, setHoveredSampleId] = useState<string | null>(null);
+  const { setHint } = useHint();
 
   const handleDelete = async (sampleId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -68,10 +70,12 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
         <button
           onClick={onLoadSample}
           onMouseEnter={(e) => {
+            setHint('LOAD SAMPLE · BROWSE FILES');
             e.currentTarget.style.backgroundColor = '#000000';
             e.currentTarget.style.color = '#FFFFFF';
           }}
           onMouseLeave={(e) => {
+            setHint(null);
             e.currentTarget.style.backgroundColor = '#FFFFFF';
             e.currentTarget.style.color = '#000000';
           }}
@@ -123,11 +127,13 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
           disabled={!selectedSampleId}
           onMouseEnter={(e) => {
             if (selectedSampleId) {
+              setHint('DELETE · REMOVE SAMPLE');
               e.currentTarget.style.backgroundColor = '#000000';
               e.currentTarget.style.color = '#FFFFFF';
             }
           }}
           onMouseLeave={(e) => {
+            setHint(null);
             e.currentTarget.style.backgroundColor = '#FFFFFF';
             e.currentTarget.style.color = selectedSampleId ? '#000000' : '#999999';
           }}
@@ -196,8 +202,19 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             <div
               key={sample.id}
               onClick={() => onSampleSelect(isSelected ? null : sample.id)}
-              onMouseEnter={() => setHoveredSampleId(sample.id)}
-              onMouseLeave={() => setHoveredSampleId(null)}
+              onMouseEnter={() => {
+                setHoveredSampleId(sample.id);
+                // Truncate to fit in hint display: "SAMPLE · " (9 chars) + sample name (max 48 chars) = ~57 chars
+                const maxSampleNameLength = 48;
+                const truncatedName = sample.name.length > maxSampleNameLength 
+                  ? sample.name.slice(0, maxSampleNameLength) + '...' 
+                  : sample.name;
+                setHint(`SAMPLE · ${truncatedName.toUpperCase()}`);
+              }}
+              onMouseLeave={() => {
+                setHoveredSampleId(null);
+                setHint(null);
+              }}
               style={{
                 width: '309px',
                 height: '11px',

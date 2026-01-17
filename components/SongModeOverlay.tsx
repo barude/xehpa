@@ -1,4 +1,5 @@
 import React from 'react';
+import { useHint } from './HintDisplay';
 
 interface SongModeOverlayProps {
   isSongMode: boolean;
@@ -12,6 +13,7 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
   isSongMode,
   onToggle,
 }) => {
+  const { setHint } = useHint();
   return (
     <div className="flex flex-col items-center" style={{ width: BUTTON_SIZE }}>
       {/* SONG Label */}
@@ -30,6 +32,8 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
       {/* SONG Toggle Button - 6px below label */}
       <button
         onClick={onToggle}
+        onMouseEnter={() => setHint('SONG MODE: TOGGLE')}
+        onMouseLeave={() => setHint(null)}
         className="circular-button flex items-center justify-center transition-none"
         style={{
           marginTop: '6px',

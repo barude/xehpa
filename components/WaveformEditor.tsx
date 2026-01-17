@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { SampleData } from '../types';
 import { TriggerInfo, audioEngine } from '../services/audioEngine';
+import { useHint } from './HintDisplay';
 
 interface WaveformEditorProps {
   sample: SampleData;
@@ -50,6 +51,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   const [dragTarget, setDragTarget] = useState<'start' | 'end' | null>(null);
   const [isAltHeld, setIsAltHeld] = useState(false);
   const [isLoopingPreview, setIsLoopingPreview] = useState(false);
+  const { setHint } = useHint();
 
   const duration = sample.buffer.duration;
   const viewDuration = duration / zoom;
@@ -585,6 +587,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       {/* START BUTTON */}
       <button
         onClick={() => setFocusMode('start')}
+        onMouseEnter={() => setHint('START · SET POINT [TAB]')}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '31px',
@@ -620,6 +624,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       {/* END BUTTON */}
       <button
         onClick={() => setFocusMode('end')}
+        onMouseEnter={() => setHint('END · SET POINT [TAB]')}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '31px',
@@ -656,6 +662,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       <button
         onClick={onTogglePlayMode}
         className="circular-button"
+        onMouseEnter={() => setHint('PLAY MODE · TOGGLE')}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '29px',
@@ -733,6 +741,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       {/* LOOP BUTTON */}
       <button
         onClick={toggleLoopPreview}
+        onMouseEnter={() => setHint('LOOP · PREVIEW MODE')}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '31px',
@@ -766,6 +776,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       {/* REVERSE BUTTON */}
       <button
         onClick={onToggleReverse}
+        onMouseEnter={() => setHint('REVERSE · TOGGLE')}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '41px',
@@ -815,6 +827,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         <canvas 
           ref={canvasRef} 
           onMouseDown={handleCanvasMouseDown}
+          onMouseEnter={() => setHint('WAVEFORM · DRAG OR ALT+CLICK')}
+          onMouseLeave={() => setHint(null)}
           style={{
             width: '100%',
             height: '100%',
@@ -835,6 +849,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           left: '0px',
           cursor: 'pointer'
         }}
+        onMouseEnter={() => setHint('ZOOM · NAVIGATE')}
+        onMouseLeave={() => setHint(null)}
         onMouseDown={(e) => {
           e.preventDefault();
           const sliderElement = e.currentTarget;

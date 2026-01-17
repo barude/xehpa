@@ -1,4 +1,5 @@
 import React from 'react';
+import { useHint } from './HintDisplay';
 
 interface PadBankOverlayProps {
   activeBankIdx: number;
@@ -9,6 +10,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
   activeBankIdx,
   onBankChange,
 }) => {
+  const { setHint } = useHint();
+  const bankLabels = ['A', 'B', 'C', 'D'];
   // Exact measurements from SVG viewBox (0 0 33 93)
   // Triangle positions from SVG paths:
   // Triangle 0: top=25, bottom=31 (filled)
@@ -23,6 +26,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
         width: '33px',
         height: '93px',
       }}
+      onMouseEnter={() => setHint(`PAD BANK · CURRENT BANK ${bankLabels[activeBankIdx]}`)}
+      onMouseLeave={() => setHint(null)}
     >
       {/* Render the entire SVG exactly as provided */}
       <svg
@@ -80,6 +85,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
           e.stopPropagation();
           onBankChange(0);
         }}
+        onMouseEnter={() => setHint(`PAD BANK · SWITCH BANK ${bankLabels[0]}`)}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           top: '25px',
@@ -102,6 +109,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
           e.stopPropagation();
           onBankChange(1);
         }}
+        onMouseEnter={() => setHint(`PAD BANK · SWITCH BANK ${bankLabels[1]}`)}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           top: '45px',
@@ -124,6 +133,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
           e.stopPropagation();
           onBankChange(2);
         }}
+        onMouseEnter={() => setHint(`PAD BANK · SWITCH BANK ${bankLabels[2]}`)}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           top: '64.2656px',
@@ -146,6 +157,8 @@ const PadBankOverlay: React.FC<PadBankOverlayProps> = ({
           e.stopPropagation();
           onBankChange(3);
         }}
+        onMouseEnter={() => setHint(`PAD BANK · SWITCH BANK ${bankLabels[3]}`)}
+        onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           top: '85px',

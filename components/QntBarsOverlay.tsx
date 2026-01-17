@@ -1,5 +1,6 @@
 import React from 'react';
 import { QuantizeMode } from '../constants';
+import { useHint } from './HintDisplay';
 
 interface QntBarsOverlayProps {
   quantizeMode: QuantizeMode;
@@ -17,6 +18,7 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
   bars,
   onBarsChange,
 }) => {
+  const { setHint } = useHint();
   const isQuantizeActive = quantizeMode !== 'none';
 
   return (
@@ -37,6 +39,8 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
       {/* QNT Toggle Button - 6px below label */}
       <button
         onClick={onQuantizeModeChange}
+        onMouseEnter={() => setHint('QUANTIZE: TOGGLE')}
+        onMouseLeave={() => setHint(null)}
         className="circular-button flex items-center justify-center transition-none"
         style={{
           marginTop: '6px',
@@ -82,6 +86,8 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
       {/* BARS Toggle Button - 6px below label, always solid white */}
       <button
         onClick={onBarsChange}
+        onMouseEnter={() => setHint('PATTERN BARS: ADJUST LENGTH')}
+        onMouseLeave={() => setHint(null)}
         className="circular-button flex items-center justify-center transition-none"
         style={{
           marginTop: '6px',

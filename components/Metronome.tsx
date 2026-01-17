@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TEMPO_MIN, TEMPO_MAX } from '../constants';
+import { useHint } from './HintDisplay';
 
 interface MetronomeProps {
   tempo: number;
@@ -41,6 +42,7 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
   const [swingAngle, setSwingAngle] = useState(0);
   const animationRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+  const { setHint } = useHint();
 
   // Calculate weight position on arm based on tempo
   // Lower tempo = weight higher on arm (further from pivot)
@@ -125,7 +127,12 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
   });
 
   return (
-    <div className="relative" style={{ width: WIDTH, height: HEIGHT }}>
+    <div 
+      className="relative" 
+      style={{ width: WIDTH, height: HEIGHT }}
+      onMouseEnter={() => setHint('METRONOME · TOGGLE [M]')}
+      onMouseLeave={() => setHint(null)}
+    >
       <svg
         width={WIDTH}
         height={HEIGHT}

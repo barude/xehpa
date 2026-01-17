@@ -3,6 +3,7 @@ import Knob from './Knob';
 import FilterToggle from './FilterToggle';
 import MiniSegmentDisplay from './MiniSegmentDisplay';
 import { PadConfig } from '../types';
+import { useHint } from './HintDisplay';
 
 interface EffectsPanelProps {
   pad: PadConfig | null;
@@ -80,9 +81,26 @@ const SIZES = {
 
 const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
   const [displayValue, setDisplayValue] = useState<string>('0.00');
+  const { setHint } = useHint();
+
+  const knobHints: Record<string, string> = {
+    pitch: 'PITCH · ADJUST SEMITONE',
+    filter: 'FILTER · CUTOFF',
+    gain: 'GAIN · OUTPUT VOLUME',
+    reverb: 'REVERB · SEND AMOUNT',
+    atk: 'ATTACK · ENVELOPE TIME',
+    sus: 'SUSTAIN · ENVELOPE LEVEL',
+    pan: 'PAN · STEREO POSITION',
+    dec: 'DECAY · ENVELOPE TIME',
+    rel: 'RELEASE · ENVELOPE TIME',
+    env: 'FILTER ENV · MODULATION',
+    res: 'RESONANCE · FILTER Q',
+    filterType: 'FILTER TYPE · TOGGLE',
+  };
 
   const handleHover = useCallback((knobId: string, isHovered: boolean, value: number | string | null) => {
     if (isHovered && value !== null) {
+      setHint(knobHints[knobId] || null);
       if (typeof value === 'string') {
         // Ensure string values are exactly 4 characters (pad right for labels like "LOW")
         const padded = value.padEnd(4, ' ').slice(0, 4);
@@ -92,10 +110,11 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
         setDisplayValue(formatted);
       }
     } else {
+      setHint(null);
       // Clear display when not hovering
       setDisplayValue('0.00');
     }
-  }, []);
+  }, [setHint]);
 
   const formatKnobValue = (knobId: string, value: number | string): string => {
     // All values must be exactly 4 characters for the display

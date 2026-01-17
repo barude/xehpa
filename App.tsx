@@ -15,6 +15,8 @@ import EffectsPanel from './components/EffectsPanel';
 import SongBankOverlay from './components/SongBankOverlay';
 import PadBankOverlay from './components/PadBankOverlay';
 import Dividers from './components/Dividers';
+import { HintProvider, HintDisplay, useHint } from './components/HintDisplay';
+import TransportButtons from './components/TransportButtons';
 import { randomUUID } from './utils/uuid';
 import { safeLocalStorageGet, safeLocalStorageSet, createDebouncedLocalStorageWrite } from './utils/localStorage';
 import { isValidPad, clampTempo } from './utils/validation';
@@ -731,7 +733,8 @@ export default function App() {
   };
 
   const renameStep = (stepId: string, newName: string) => {
-    setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdxRef.current ? arr.map(s => s.id === stepId ? { ...s, name: newName } : s) : arr));
+    const limitedName = newName.replace(/\n/g, '').slice(0, 45);
+    setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdxRef.current ? arr.map(s => s.id === stepId ? { ...s, name: limitedName } : s) : arr));
   };
 
   const addSongStep = () => {
@@ -1108,17 +1111,275 @@ export default function App() {
     : getPatternDuration(activePattern);
   const visualBeatsCount = Math.round(activeBaseDur / getBeatDuration());
 
+  // Centralized default hint logic - suggests next meaningful musical action
+  const getDefaultHint = useCallback((): string | null => {
+    // 1. No samples loaded
+    if (samples.length === 0) {
+      return 'LOAD SAMPLE TO START';
+    }
+
+    // 2. Samples exist, no pad selected
+    if (selectedPadId === null) {
+      return 'SELECT A PAD';
+    }
+
+    // 3. Pad selected, no sample assigned
+    const selectedPad = pads.find(p => p.id === selectedPadId);
+    if (!selectedPad || !selectedPad.sampleId) {
+      return 'ASSIGN SAMPLE TO PAD';
+    }
+
+    // 4. Sample assigned, check if start/end are untouched (start=0 and end=full duration)
+    const sample = samples.find(s => s.id === selectedPad.sampleId);
+    if (sample) {
+      const hasCustomRange = selectedPad.start > 0 || 
+                            (selectedPad.end < sample.buffer.duration - 0.001);
+      if (!hasCustomRange) {
+        return 'SET START AND END POINTS';
+      }
+    }
+
+    // 5. Start/end set, check if all patterns are empty (no hits)
+    const hasPatternsWithHits = patterns.some(p => p.hits.length > 0);
+    if (!hasPatternsWithHits) {
+      // If in Pattern Mode and stopped, be more explicit about recording
+      if (!isSongMode && transport === TransportStatus.STOPPED) {
+        return 'SELECT PATTERN · PRESS RECORD';
+      }
+      return 'RECORD A PATTERN';
+    }
+
+    // After at least one pattern has hits, introduce mode awareness
+    // 6. Song Mode is OFF
+    if (!isSongMode) {
+      return 'SWITCH TO SONG MODE TO ARRANGE';
+    }
+
+    // 7. Song Mode is ON, check active arrangement bank
+    const activeBank = arrangementBanks[activeArrIdx] || [];
+    if (activeBank.length === 0) {
+      return 'ADD SECTION TO ARRANGEMENT';
+    }
+
+    // 8. Song Mode is ON, check if sections have patterns but those patterns are empty
+    const sectionsWithPatterns = activeBank.filter(step => step.activePatternIds.length > 0);
+    if (sectionsWithPatterns.length > 0) {
+      // Check if all active patterns in sections are empty
+      const allSectionPatternsHaveHits = sectionsWithPatterns.every(step => 
+        step.activePatternIds.some(patternId => {
+          const pattern = patterns.find(p => p.id === patternId);
+          return pattern && pattern.hits.length > 0;
+        })
+      );
+      if (!allSectionPatternsHaveHits) {
+        return 'RECORD PATTERNS IN SECTION';
+      }
+    }
+
+    // 9. Song Mode is ON, check if current section (or any section) has no active patterns
+    const hasSectionWithActivePatterns = activeBank.some(step => step.activePatternIds.length > 0);
+    if (!hasSectionWithActivePatterns) {
+      return 'SELECT PATTERNS FOR THIS SECTION';
+    }
+
+    // Once patterns are active in a section, make transport-aware (RECORDING has highest priority)
+    // 10. Transport is RECORDING
+    if (transport === TransportStatus.RECORDING) {
+      return 'RECORDING';
+    }
+
+    // 11. Transport is PLAYING
+    if (transport === TransportStatus.PLAYING) {
+      return 'PLAYING';
+    }
+
+    // 12. Transport is STOPPED
+    return 'PRESS SPACE TO PLAY';
+  }, [samples, selectedPadId, pads, patterns, isSongMode, arrangementBanks, activeArrIdx, transport]);
+
+  const defaultHint = getDefaultHint();
+
+  return (
+    <HintProvider>
+      <AppContent
+        defaultHint={defaultHint}
+        transport={transport}
+        toggleTransport={toggleTransport}
+        toggleRecord={toggleRecord}
+        isSongMode={isSongMode}
+        currentStep={currentStep}
+        activePattern={activePattern}
+        currentSongTime={currentSongTime}
+        totalSongDuration={totalSongDuration}
+        beatIndicatorRefs={beatIndicatorRefs}
+        progressBarRef={progressBarRef}
+        visualBeatsCount={visualBeatsCount}
+        currentBankPads={currentBankPads}
+        pads={pads}
+        selectedPadId={selectedPadId}
+        setSelectedPadId={setSelectedPadId}
+        setSelectedSampleId={setSelectedSampleId}
+        triggerPad={triggerPad}
+        stopPreview={stopPreview}
+        selectedPadIdForEffects={selectedPadId}
+        setPads={setPads}
+        samples={samples}
+        selectedSampleId={selectedSampleId}
+        setSamples={setSamples}
+        tempo={tempo}
+        setTempo={setTempo}
+        isDraggingTempo={isDraggingTempo}
+        setIsDraggingTempo={setIsDraggingTempo}
+        handleTap={handleTap}
+        isTapping={isTapping}
+        isMetronomeEnabled={isMetronomeEnabled}
+        setIsMetronomeEnabled={setIsMetronomeEnabled}
+        lastTriggerInfo={lastTriggerInfo}
+        previewActive={previewActive}
+        previewingPadId={previewingPadId}
+        setLastTriggerInfo={setLastTriggerInfo}
+        frameScale={frameScale}
+        currentPatternId={currentPatternId}
+        patterns={patterns}
+        setCurrentPatternId={setCurrentPatternId}
+        setPatterns={setPatterns}
+        deletePattern={deletePattern}
+        quantizeMode={quantizeMode}
+        setQuantizeMode={setQuantizeMode}
+        arrangementBanks={arrangementBanks}
+        setArrangementBanks={setArrangementBanks}
+        activeArrIdx={activeArrIdx}
+        setActiveArrIdx={setActiveArrIdx}
+        activeBankIdx={activeBankIdx}
+        setActiveBankIdx={setActiveBankIdx}
+        isProjectLoading={isProjectLoading}
+        editingStepId={editingStepId}
+        setEditingStepId={setEditingStepId}
+        currentSongStepIdx={currentSongStepIdx}
+        draggedStepIdx={draggedStepIdx}
+        setDraggedStepIdx={setDraggedStepIdx}
+        dropIndicatorIdx={dropIndicatorIdx}
+        setDropIndicatorIdx={setDropIndicatorIdx}
+        setIsSongMode={setIsSongMode}
+        activePadIds={activePadIds}
+        currentArrangement={currentArrangement}
+        isExportingStems={isExportingStems}
+        setIsExportingStems={setIsExportingStems}
+        isSectionLoopActive={isSectionLoopActive}
+        setIsSectionLoopActive={setIsSectionLoopActive}
+        setCurrentSongStepIdx={setCurrentSongStepIdx}
+        handleNewProject={handleNewProject}
+        saveProject={saveProject}
+        loadProject={loadProject}
+        addSongStep={addSongStep}
+        createNewPattern={createNewPattern}
+        duplicatePattern={duplicatePattern}
+        renamePattern={renamePattern}
+        renameStep={renameStep}
+        handleDragStart={handleDragStart}
+        handleDragOver={handleDragOver}
+        handleDrop={handleDrop}
+        editingPatternId={editingPatternId}
+        setEditingPatternId={setEditingPatternId}
+      />
+    </HintProvider>
+  );
+}
+
+// Inner component that uses useHint - must be inside HintProvider
+const AppContent: React.FC<{
+  defaultHint: string | null;
+  transport: TransportStatus;
+  toggleTransport: () => void;
+  toggleRecord: () => void;
+  isSongMode: boolean;
+  currentStep: SongStep | undefined;
+  activePattern: Pattern | undefined;
+  currentSongTime: number;
+  totalSongDuration: number;
+  beatIndicatorRefs: React.MutableRefObject<(HTMLDivElement | null)[]>;
+  progressBarRef: React.RefObject<HTMLDivElement>;
+  visualBeatsCount: number;
+  currentBankPads: PadConfig[];
+  pads: PadConfig[];
+  selectedPadId: number | null;
+  setSelectedPadId: (id: number | null) => void;
+  setSelectedSampleId: (id: string | null) => void;
+  triggerPad: (id: number, offset?: number, looping?: boolean) => void;
+  stopPreview: () => void;
+  selectedPadIdForEffects: number | null;
+  setPads: React.Dispatch<React.SetStateAction<PadConfig[]>>;
+  samples: SampleData[];
+  selectedSampleId: string | null;
+  setSamples: React.Dispatch<React.SetStateAction<SampleData[]>>;
+  tempo: number;
+  setTempo: (tempo: number) => void;
+  isDraggingTempo: boolean;
+  setIsDraggingTempo: (isDragging: boolean) => void;
+  handleTap: () => void;
+  isTapping: boolean;
+  isMetronomeEnabled: boolean;
+  setIsMetronomeEnabled: (enabled: boolean) => void;
+  lastTriggerInfo: {padId: number, trigger: TriggerInfo} | null;
+  previewActive: boolean;
+  previewingPadId: number | null;
+  setLastTriggerInfo: (info: {padId: number, trigger: TriggerInfo} | null) => void;
+  frameScale: number;
+  currentPatternId: string;
+  patterns: Pattern[];
+  setCurrentPatternId: (id: string) => void;
+  setPatterns: React.Dispatch<React.SetStateAction<Pattern[]>>;
+  deletePattern: (id: string) => void;
+  quantizeMode: 'none' | '1/8' | '1/16';
+  setQuantizeMode: (mode: 'none' | '1/8' | '1/16') => void;
+  arrangementBanks: SongStep[][];
+  setArrangementBanks: React.Dispatch<React.SetStateAction<SongStep[][]>>;
+  activeArrIdx: number;
+  setActiveArrIdx: (idx: number) => void;
+  activeBankIdx: number;
+  setActiveBankIdx: (idx: number) => void;
+  isProjectLoading: boolean;
+  editingStepId: string | null;
+  setEditingStepId: (id: string | null) => void;
+  currentSongStepIdx: number;
+  draggedStepIdx: number | null;
+  setDraggedStepIdx: (idx: number | null) => void;
+  dropIndicatorIdx: number | null;
+  setDropIndicatorIdx: (idx: number | null) => void;
+  activePadIds: Set<number>;
+  currentArrangement: SongStep[];
+  isExportingStems: boolean;
+  setIsExportingStems: (exporting: boolean) => void;
+  isSectionLoopActive: boolean;
+  setIsSectionLoopActive: (active: boolean) => void;
+  setCurrentSongStepIdx: (idx: number) => void;
+  handleNewProject: () => Promise<void>;
+  saveProject: () => Promise<void>;
+  loadProject: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
+  addSongStep: () => void;
+  createNewPattern: () => void;
+  duplicatePattern: (id: string) => void;
+  renamePattern: (id: string, newName: string) => void;
+  renameStep: (id: string, newName: string) => void;
+  handleDragStart: (e: React.DragEvent, idx: number) => void;
+  handleDragOver: (e: React.DragEvent, idx: number) => void;
+  handleDrop: (e: React.DragEvent, idx: number) => void;
+  editingPatternId: string | null;
+  setEditingPatternId: (id: string | null) => void;
+}> = (props) => {
+  const { setHint } = useHint();
+
   return (
     <div className="app-wrapper">
       <div 
         className="app-frame"
-        style={{ transform: `scale(${frameScale})` }}
+          style={{ transform: `scale(${props.frameScale})` }}
       >
         <div className="app-content relative flex h-full overflow-hidden bg-black text-[#4a4a4a] font-mono">
       {/* Dividers - reactive spectrum bars that respond to audio */}
       <Dividers />
       
-      {isProjectLoading && (
+      {props.isProjectLoading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black" style={{ position: 'fixed' }}>
           <div className="w-32 h-0.5 bg-[#ff6600] animate-pulse mb-4" />
           <p className="text-[#ff6600] text-[8px] uppercase tracking-[0.3em]">SYSTEM RESTORE</p>
@@ -1128,14 +1389,14 @@ export default function App() {
       {/* QNT/BARS Overlay - positioned over grid lines (right side) */}
       <div className="absolute z-10" style={{ top: '65px', right: '371px' }}>
         <QntBarsOverlay
-          quantizeMode={quantizeMode}
-          onQuantizeModeChange={() => setQuantizeMode(quantizeMode === 'none' ? '1/8' : quantizeMode === '1/8' ? '1/16' : 'none')}
-          bars={activePattern?.bars || 4}
+          quantizeMode={props.quantizeMode}
+          onQuantizeModeChange={() => props.setQuantizeMode(props.quantizeMode === 'none' ? '1/8' : props.quantizeMode === '1/8' ? '1/16' : 'none')}
+          bars={props.activePattern?.bars || 4}
           onBarsChange={() => {
-            if (!activePattern) return;
-            const idx = PATTERN_BAR_OPTIONS.indexOf(activePattern.bars);
+            if (!props.activePattern) return;
+            const idx = PATTERN_BAR_OPTIONS.indexOf(props.activePattern.bars);
             const nextBars = PATTERN_BAR_OPTIONS[(idx + 1) % PATTERN_BAR_OPTIONS.length];
-            setPatterns(prev => prev.map(p => p.id === currentPatternId ? { ...p, bars: nextBars } : p));
+            props.setPatterns(prev => prev.map(p => p.id === props.currentPatternId ? { ...p, bars: nextBars } : p));
           }}
         />
       </div>
@@ -1143,8 +1404,8 @@ export default function App() {
       {/* SONG Mode Overlay - positioned over grid lines (left side), aligned with BARS button */}
       <div className="absolute z-10" style={{ top: '124px', left: '371px' }}>
         <SongModeOverlay
-          isSongMode={isSongMode}
-          onToggle={() => setIsSongMode(!isSongMode)}
+          isSongMode={props.isSongMode}
+          onToggle={() => props.setIsSongMode(!props.isSongMode)}
         />
       </div>
       
@@ -1190,7 +1451,9 @@ export default function App() {
           
           {/* MENU Section - positioned at exact Figma coordinates */}
           <button 
-            onClick={handleNewProject} 
+            onClick={props.handleNewProject}
+            onMouseEnter={() => setHint('NEW PROJECT')}
+            onMouseLeave={() => setHint(null)}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -1206,7 +1469,9 @@ export default function App() {
             NEW
           </button>
           <button 
-            onClick={saveProject} 
+            onClick={props.saveProject}
+            onMouseEnter={() => setHint('SAVE PROJECT')}
+            onMouseLeave={() => setHint(null)}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -1222,6 +1487,8 @@ export default function App() {
             SAVE
           </button>
           <label 
+            onMouseEnter={() => setHint('LOAD PROJECT')}
+            onMouseLeave={() => setHint(null)}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -1235,13 +1502,15 @@ export default function App() {
             className="hover:opacity-60 transition-opacity cursor-pointer"
           >
             LOAD
-            <input type="file" className="hidden" accept=".fck" onChange={loadProject} />
+            <input type="file" className="hidden" accept=".fck" onChange={props.loadProject} />
           </label>
           <button 
-            onClick={() => audioEngine.exportWAV(currentArrangement, patterns, tempo, pads, samples).then(blob => {
+                onClick={() => audioEngine.exportWAV(props.currentArrangement, props.patterns, props.tempo, props.pads, props.samples).then(blob => {
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a'); a.href = url; a.download = `XEHPA_Export_${new Date().getTime()}.wav`; a.click();
-            })} 
+            })}
+            onMouseEnter={() => setHint('EXPORT WAV')}
+            onMouseLeave={() => setHint(null)}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -1258,10 +1527,10 @@ export default function App() {
           </button>
           <button 
             onClick={async () => {
-              if (isExportingStems) return;
-              setIsExportingStems(true);
+              if (props.isExportingStems) return;
+              props.setIsExportingStems(true);
               try {
-                const blob = await audioEngine.exportStems(currentArrangement, patterns, tempo, pads, samples);
+                const blob = await audioEngine.exportStems(props.currentArrangement, props.patterns, props.tempo, props.pads, props.samples);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -1272,10 +1541,12 @@ export default function App() {
                 console.error('Export stems error:', error);
                 alert(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
               } finally {
-                setIsExportingStems(false);
+                props.setIsExportingStems(false);
               }
             }}
-            disabled={isExportingStems}
+            disabled={props.isExportingStems}
+            onMouseEnter={() => setHint('EXPORT STEMS')}
+            onMouseLeave={() => setHint(null)}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -1286,9 +1557,9 @@ export default function App() {
               lineHeight: '12px',
               color: '#FFFFFF',
             }}
-            className={`flex items-center gap-1 ${isExportingStems ? 'opacity-40 cursor-wait' : 'hover:opacity-60 transition-opacity'}`}
+            className={`flex items-center gap-1 ${props.isExportingStems ? 'opacity-40 cursor-wait' : 'hover:opacity-60 transition-opacity'}`}
           >
-            {isExportingStems && (
+            {props.isExportingStems && (
               <svg className="animate-spin h-2 w-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -1315,18 +1586,18 @@ export default function App() {
             onDragOver={e => e.preventDefault()}
           >
             <div className="flex flex-col">
-              {currentArrangement.map((step, idx) => {
-                const isExpanded = editingStepId === step.id;
-                const isSelected = currentSongStepIdx === idx;
+              {props.currentArrangement.map((step, idx) => {
+                const isExpanded = props.editingStepId === step.id;
+                const isSelected = props.currentSongStepIdx === idx;
                 
                 return (
                   <div key={step.id} className="relative">
-                    {dropIndicatorIdx === idx && draggedStepIdx !== null && (
+                    {props.dropIndicatorIdx === idx && props.draggedStepIdx !== null && (
                       <div className="h-0.5 bg-white w-full absolute top-0 left-0 z-10" />
                     )}
                     
                     <div 
-                      className={`relative border-2 transition-none ${isSelected ? 'bg-white border-white' : 'border-white bg-transparent hover:bg-white'} ${draggedStepIdx === idx ? 'opacity-30' : 'opacity-100'} group/section`}
+                      className={`relative border-2 transition-none ${isSelected ? 'bg-white border-white' : 'border-white bg-transparent hover:bg-white'} ${props.draggedStepIdx === idx ? 'opacity-30' : 'opacity-100'} group/section`}
                       style={{ marginTop: idx === 0 ? 0 : 5, minHeight: isExpanded ? 'auto' : 35 }}
                     >
                       {/* Vertical divider line - spans from top border to horizontal divider */}
@@ -1338,11 +1609,39 @@ export default function App() {
                       <div 
                         className="h-[31px] flex items-center cursor-pointer"
                         draggable
-                        onDragStart={() => handleDragStart(idx)}
-                        onDragOver={(e) => handleDragOver(e, idx)}
-                        onDrop={handleDrop}
-                        onDragEnd={() => { setDraggedStepIdx(null); setDropIndicatorIdx(null); }}
-                        onClick={() => setCurrentSongStepIdx(idx)}
+                        onDragStart={(e) => {
+                          props.handleDragStart(e, idx);
+                          setHint('DRAG TO REORDER SECTIONS');
+                        }}
+                        onDragOver={(e) => {
+                          props.handleDragOver(e, idx);
+                          if (props.draggedStepIdx !== null && props.draggedStepIdx !== idx) {
+                            setHint('DROP TO REORDER SECTIONS');
+                          }
+                        }}
+                        onDrop={(e) => {
+                          props.handleDrop(e, idx);
+                          setHint(null);
+                        }}
+                        onDragEnd={() => { 
+                          props.setDraggedStepIdx(null); 
+                          props.setDropIndicatorIdx(null);
+                          setHint(null);
+                        }}
+                        onClick={() => props.setCurrentSongStepIdx(idx)}
+                        onMouseEnter={() => {
+                          if (props.draggedStepIdx === null) {
+                            const truncatedName = step.name.length > 42 ? step.name.slice(0, 42) + '...' : step.name;
+                            setHint(`SECTION ${idx + 1}: ${truncatedName}`);
+                          } else if (props.draggedStepIdx !== idx) {
+                            setHint('DROP TO REORDER SECTIONS');
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          if (props.draggedStepIdx === null) {
+                            setHint(null);
+                          }
+                        }}
                       >
                         <span className={`w-4 text-center font-light text-[6px] ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} style={{ fontFamily: 'Barlow Condensed' }}>
                           {idx + 1}
@@ -1353,15 +1652,31 @@ export default function App() {
                             <input 
                               autoFocus
                               value={step.name} 
-                              onChange={e => renameStep(step.id, e.target.value)} 
-                              onKeyDown={e => e.key === 'Enter' && setEditingStepId(null)}
+                              maxLength={45}
+                              onChange={e => props.renameStep(step.id, e.target.value.replace(/\n/g, ''))} 
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  props.setEditingStepId(null);
+                                }
+                              }}
                               onClick={e => e.stopPropagation()}
                               className={`bg-transparent text-[10px] uppercase outline-none w-full font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed' }}
                             />
                           ) : (
-                            <span className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} style={{ fontFamily: 'Barlow Condensed' }}>
-                              {step.name}
+                            <span 
+                              className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} 
+                              style={{ 
+                                fontFamily: 'Barlow Condensed',
+                                maxWidth: '100%',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                              title={step.name}
+                            >
+                              {step.name.slice(0, 45)}
                             </span>
                           )}
                         </div>
@@ -1371,26 +1686,32 @@ export default function App() {
                             onClick={(e) => { 
                               e.stopPropagation(); 
                               if (isSelected) {
-                                setIsSectionLoopActive(!isSectionLoopActive); 
+                                props.setIsSectionLoopActive(!props.isSectionLoopActive); 
                               } else {
-                                setCurrentSongStepIdx(idx);
-                                setIsSectionLoopActive(true);
+                                props.setCurrentSongStepIdx(idx);
+                                props.setIsSectionLoopActive(true);
                               }
                             }}
-                            className={`w-[25px] h-[21px] border-2 transition-none flex items-center justify-center flex-shrink-0 ${isSelected && isSectionLoopActive ? 'bg-black border-black' : isSelected ? 'border-black bg-transparent' : 'border-white bg-transparent group-hover/section:border-black'}`}
+                            onMouseEnter={() => setHint('SECTION LOOP: TOGGLE')}
+                            onMouseLeave={() => setHint(null)}
+                            className={`w-[25px] h-[21px] border-2 transition-none flex items-center justify-center flex-shrink-0 ${isSelected && props.isSectionLoopActive ? 'bg-black border-black' : isSelected ? 'border-black bg-transparent' : 'border-white bg-transparent group-hover/section:border-black'}`}
                           >
-                            <svg viewBox="0 0 24 24" className={`w-3 h-3 ${isSelected && isSectionLoopActive ? 'fill-white' : isSelected ? 'fill-black' : 'fill-white group-hover/section:fill-black'}`}>
+                            <svg viewBox="0 0 24 24" className={`w-3 h-3 ${isSelected && props.isSectionLoopActive ? 'fill-white' : isSelected ? 'fill-black' : 'fill-white group-hover/section:fill-black'}`}>
                               <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
                 </button>
                           
-                          <div className={`w-[25px] h-[21px] border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black'}`}>
+                          <div 
+                            className={`w-[25px] h-[21px] border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black'}`}
+                            onMouseEnter={() => setHint('SECTION REPEATS: ADJUST')}
+                            onMouseLeave={() => setHint(null)}
+                          >
                             <input 
                               type="number" 
                               min="1" 
                               value={step.repeats} 
                               onClick={e => e.stopPropagation()}
-                              onChange={(e) => setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, repeats: parseInt(e.target.value) || 1 } : s) : arr))}
+                              onChange={(e) => props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, repeats: parseInt(e.target.value) || 1 } : s) : arr))}
                               className={`w-full h-full bg-transparent text-[10px] text-center outline-none font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed' }}
                             />
@@ -1402,8 +1723,10 @@ export default function App() {
                           <button 
                             onClick={(e) => { 
                               e.stopPropagation(); 
-                              setEditingStepId(isExpanded ? null : step.id); 
+                              props.setEditingStepId(isExpanded ? null : step.id); 
                             }}
+                            onMouseEnter={() => setHint('EDIT: SELECT PATTERNS')}
+                            onMouseLeave={() => setHint(null)}
                             className={`text-[10px] uppercase font-medium flex items-center gap-[3px] flex-shrink-0 ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                             style={{ fontFamily: 'Barlow Condensed' }}
                           >
@@ -1417,7 +1740,7 @@ export default function App() {
                         <div className={`border-t-2 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black group-hover/section:bg-white'}`} style={{ width: 'calc(100% + 4px)', marginLeft: '-2px' }}>
                           <div className="px-[16px] pt-[18px] pb-[2px] max-h-[78px] overflow-y-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                             <div className="grid grid-cols-2 gap-x-[10px] gap-y-[2px]">
-                              {patterns.map(p => {
+                              {props.patterns.map(p => {
                                 const isActive = step.activePatternIds.includes(p.id);
                                 const isArmed = step.armedPatternId === p.id;
                                 
@@ -1425,8 +1748,10 @@ export default function App() {
                                   <div 
                                     key={p.id}
                                     className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black') : isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-white group-hover/section:border-black'}`}
+                                    onMouseEnter={() => setHint(`PATTERN: ${p.name} · ${isActive ? 'REMOVE FROM SECTION' : 'ADD TO SECTION'}`)}
+                                    onMouseLeave={() => setHint(null)}
                                     onClick={() => {
-                                      setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => {
+                                      props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? arr.map(s => {
                                         if (s.id !== step.id) return s;
                                         const activeIds = s.activePatternIds.includes(p.id) 
                                           ? s.activePatternIds.filter(id => id !== p.id) 
@@ -1448,8 +1773,10 @@ export default function App() {
                                         className={`w-[8px] h-[8px] rounded-full flex-shrink-0 cursor-pointer ${isArmed ? (isSelected ? 'bg-white' : 'bg-black group-hover/section:bg-white') : (isSelected ? 'border-[1.5px] border-white bg-transparent' : 'border-[1.5px] border-black bg-transparent group-hover/section:border-white')}`}
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, armedPatternId: p.id } : s) : arr));
+                                          props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, armedPatternId: p.id } : s) : arr));
                                         }}
+                                        onMouseEnter={() => setHint(isArmed ? 'RECORDING TO THIS PATTERN' : 'ARM TO RECORD HERE')}
+                                        onMouseLeave={() => setHint(null)}
                                       />
                                     )}
               </div>
@@ -1461,8 +1788,10 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-x-[10px] px-[16px] pb-[16px]">
                             <button 
                               onClick={() => {
-                                setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? [...arr.slice(0, idx + 1), { ...step, id: randomUUID() }, ...arr.slice(idx + 1)] : arr));
+                                props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? [...arr.slice(0, idx + 1), { ...step, id: randomUUID() }, ...arr.slice(idx + 1)] : arr));
                               }}
+                              onMouseEnter={() => setHint('DUPLICATE SECTION')}
+                              onMouseLeave={() => setHint(null)}
                               className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
@@ -1470,14 +1799,16 @@ export default function App() {
                             </button>
                             <button 
                               onClick={() => {
-                                if (currentArrangement.length > 1) {
-                                  setArrangementBanks(prev => prev.map((arr, i) => i === activeArrIdx ? arr.filter(s => s.id !== step.id) : arr));
-                                  if (currentSongStepIdx >= currentArrangement.length - 1) {
-                                    setCurrentSongStepIdx(Math.max(0, currentArrangement.length - 2));
+                                if (props.currentArrangement.length > 1) {
+                                  props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? arr.filter(s => s.id !== step.id) : arr));
+                                  if (props.currentSongStepIdx >= props.currentArrangement.length - 1) {
+                                    props.setCurrentSongStepIdx(Math.max(0, props.currentArrangement.length - 2));
                                   }
-                                  setEditingStepId(null);
+                                  props.setEditingStepId(null);
                                 }
                               }}
+                              onMouseEnter={() => setHint('DELETE SECTION')}
+                              onMouseLeave={() => setHint(null)}
                               className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
@@ -1488,7 +1819,7 @@ export default function App() {
                     )}
                   </div>
                     
-                    {idx === currentArrangement.length - 1 && dropIndicatorIdx === currentArrangement.length && draggedStepIdx !== null && (
+                    {idx === props.currentArrangement.length - 1 && props.dropIndicatorIdx === props.currentArrangement.length && props.draggedStepIdx !== null && (
                       <div className="h-0.5 bg-white w-full mt-1" />
                     )}
               </div>
@@ -1496,7 +1827,9 @@ export default function App() {
               })}
               
               <button 
-                onClick={addSongStep} 
+                onClick={props.addSongStep} 
+                onMouseEnter={() => setHint('ADD SECTION TO SONG')}
+                onMouseLeave={() => setHint(null)}
                 className="h-[22px] border-2 border-dashed border-white text-[10px] text-white uppercase font-medium hover:bg-white hover:text-black transition-none mt-[8px] flex items-center justify-center"
                 style={{ fontFamily: 'Barlow Condensed' }}
               >
@@ -1539,7 +1872,9 @@ export default function App() {
                
                {/* Button areas */}
                <button 
-                 onClick={createNewPattern}
+                 onClick={props.createNewPattern}
+                 onMouseEnter={() => setHint('CREATE NEW PATTERN')}
+                 onMouseLeave={() => setHint(null)}
                  className="menu-button-hover"
                  style={{
                    flex: 1,
@@ -1563,7 +1898,9 @@ export default function App() {
                  NEW PATTERN
                         </button>
                <button 
-                 onClick={duplicatePattern}
+                 onClick={() => props.duplicatePattern(props.currentPatternId)}
+                 onMouseEnter={() => setHint('DUPLICATE PATTERN')}
+                 onMouseLeave={() => setHint(null)}
                  className="menu-button-hover"
                  style={{
                    flex: 1,
@@ -1587,7 +1924,9 @@ export default function App() {
                  DUPLICATE
                </button>
                <button 
-                 onClick={() => setEditingPatternId(currentPatternId)}
+                 onClick={() => props.setEditingPatternId(props.currentPatternId)}
+                 onMouseEnter={() => setHint('RENAME PATTERN')}
+                 onMouseLeave={() => setHint(null)}
                  className="menu-button-hover"
                  style={{
                    flex: 1,
@@ -1758,7 +2097,7 @@ export default function App() {
                  {/* Pattern Columns Container */}
                  {(() => {
                    // Reverse patterns so newest (last in array) appears first
-                   const reversedPatterns = [...patterns].reverse();
+                   const reversedPatterns = [...props.patterns].reverse();
                    // Simple left-to-right distribution: newest at top-left, oldest at bottom-right
                    // idx % 3 === 0 → Left, idx % 3 === 1 → Middle, idx % 3 === 2 → Right
                    const leftColumnPatterns = reversedPatterns.filter((_, idx) => idx % 3 === 0);
@@ -1786,7 +2125,7 @@ export default function App() {
                        }}>
                          {leftColumnPatterns.map(p => (
                   <div key={p.id} className="relative group" style={{ flexShrink: 0 }}>
-                    {editingPatternId === p.id ? (
+                    {props.editingPatternId === p.id ? (
                          <input 
                            autoFocus 
                            maxLength={15}
@@ -1809,26 +2148,28 @@ export default function App() {
                              textTransform: 'uppercase'
                            }}
                         value={p.name} 
-                        onChange={(e) => renamePattern(p.id, e.target.value)} 
-                        onBlur={() => setEditingPatternId(null)} 
+                        onChange={(e) => props.renamePattern(p.id, e.target.value)} 
+                        onBlur={() => props.setEditingPatternId(null)} 
                         onKeyDown={e => {
-                          if (e.key === 'Enter') setEditingPatternId(null);
-                          if (e.key === 'Escape') setEditingPatternId(null);
+                          if (e.key === 'Enter') props.setEditingPatternId(null);
+                          if (e.key === 'Escape') props.setEditingPatternId(null);
                            }} 
                          />
                     ) : (
                          <>
                       <button 
-                        onClick={() => setCurrentPatternId(p.id)} 
-                        onDoubleClick={() => setEditingPatternId(p.id)}
-                        className={currentPatternId === p.id ? '' : 'pattern-button-hover'}
+                             onClick={() => props.setCurrentPatternId(p.id)} 
+                             onDoubleClick={() => props.setEditingPatternId(p.id)}
+                             onMouseEnter={() => setHint(`PATTERN: ${p.name}`)}
+                             onMouseLeave={() => setHint(null)}
+                             className={props.currentPatternId === p.id ? '' : 'pattern-button-hover'}
                            style={{
                              width: '91px',
                              height: '11px',
                              border: '2px solid #FFFFFF',
                              boxSizing: 'content-box',
-                             background: currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                             color: currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
+                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -1847,7 +2188,7 @@ export default function App() {
                         {p.name.toUpperCase()}
                       </button>
                           <button 
-                            onClick={(e) => { e.stopPropagation(); deletePattern(p.id); }} 
+                            onClick={(e) => { e.stopPropagation(); props.deletePattern(p.id); }} 
                             style={{
                               position: 'absolute',
                               top: '-1px',
@@ -1890,7 +2231,7 @@ export default function App() {
                        }}>
                          {middleColumnPatterns.map(p => (
                      <div key={p.id} className="relative group" style={{ flexShrink: 0 }}>
-                       {editingPatternId === p.id ? (
+                       {props.editingPatternId === p.id ? (
                          <input 
                            autoFocus 
                            maxLength={15}
@@ -1913,26 +2254,28 @@ export default function App() {
                              textTransform: 'uppercase'
                            }}
                            value={p.name} 
-                           onChange={(e) => renamePattern(p.id, e.target.value)} 
-                           onBlur={() => setEditingPatternId(null)} 
+                        onChange={(e) => props.renamePattern(p.id, e.target.value)} 
+                        onBlur={() => props.setEditingPatternId(null)} 
                            onKeyDown={e => {
-                             if (e.key === 'Enter') setEditingPatternId(null);
-                             if (e.key === 'Escape') setEditingPatternId(null);
+                          if (e.key === 'Enter') props.setEditingPatternId(null);
+                          if (e.key === 'Escape') props.setEditingPatternId(null);
                            }} 
                          />
                        ) : (
                          <>
                            <button 
-                             onClick={() => setCurrentPatternId(p.id)} 
-                             onDoubleClick={() => setEditingPatternId(p.id)}
-                             className={currentPatternId === p.id ? '' : 'pattern-button-hover'}
+                             onClick={() => props.setCurrentPatternId(p.id)} 
+                             onDoubleClick={() => props.setEditingPatternId(p.id)}
+                             onMouseEnter={() => setHint(`PATTERN: ${p.name}`)}
+                             onMouseLeave={() => setHint(null)}
+                             className={props.currentPatternId === p.id ? '' : 'pattern-button-hover'}
                            style={{
                              width: '91px',
                              height: '11px',
                              border: '2px solid #FFFFFF',
                              boxSizing: 'content-box',
-                             background: currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                             color: currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
+                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -1951,7 +2294,7 @@ export default function App() {
                              {p.name.toUpperCase()}
                            </button>
                           <button 
-                            onClick={(e) => { e.stopPropagation(); deletePattern(p.id); }} 
+                            onClick={(e) => { e.stopPropagation(); props.deletePattern(p.id); }} 
                             style={{
                               position: 'absolute',
                               top: '-1px',
@@ -1994,7 +2337,7 @@ export default function App() {
                        }}>
                          {rightColumnPatterns.map(p => (
                      <div key={p.id} className="relative group" style={{ flexShrink: 0 }}>
-                       {editingPatternId === p.id ? (
+                       {props.editingPatternId === p.id ? (
                          <input 
                            autoFocus 
                            maxLength={15}
@@ -2017,26 +2360,28 @@ export default function App() {
                              textTransform: 'uppercase'
                            }}
                            value={p.name} 
-                           onChange={(e) => renamePattern(p.id, e.target.value)} 
-                           onBlur={() => setEditingPatternId(null)} 
+                        onChange={(e) => props.renamePattern(p.id, e.target.value)} 
+                        onBlur={() => props.setEditingPatternId(null)} 
                            onKeyDown={e => {
-                             if (e.key === 'Enter') setEditingPatternId(null);
-                             if (e.key === 'Escape') setEditingPatternId(null);
+                          if (e.key === 'Enter') props.setEditingPatternId(null);
+                          if (e.key === 'Escape') props.setEditingPatternId(null);
                            }} 
                          />
                        ) : (
                          <>
                            <button 
-                             onClick={() => setCurrentPatternId(p.id)} 
-                             onDoubleClick={() => setEditingPatternId(p.id)}
-                             className={currentPatternId === p.id ? '' : 'pattern-button-hover'}
+                             onClick={() => props.setCurrentPatternId(p.id)} 
+                             onDoubleClick={() => props.setEditingPatternId(p.id)}
+                             onMouseEnter={() => setHint(`PATTERN: ${p.name}`)}
+                             onMouseLeave={() => setHint(null)}
+                             className={props.currentPatternId === p.id ? '' : 'pattern-button-hover'}
                            style={{
                              width: '91px',
                              height: '11px',
                              border: '2px solid #FFFFFF',
                              boxSizing: 'content-box',
-                             background: currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                             color: currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
+                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2055,7 +2400,7 @@ export default function App() {
                              {p.name.toUpperCase()}
                      </button>
                           <button 
-                            onClick={(e) => { e.stopPropagation(); deletePattern(p.id); }} 
+                            onClick={(e) => { e.stopPropagation(); props.deletePattern(p.id); }} 
                             style={{
                               position: 'absolute',
                               top: '-1px',
@@ -2105,62 +2450,55 @@ export default function App() {
           {/* Top Row: Mode, Transport Buttons, Location */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: '#FFFFFF', marginTop: '-2px' }}>
-              {isSongMode ? 'SONG_MODE' : 'PATTERN_MODE'}
+              {props.isSongMode ? 'SONG_MODE' : 'PATTERN_MODE'}
             </div>
 
             {/* Transport Buttons - Centered */}
-            <div style={{ position: 'absolute', left: '50%', top: '0', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button onClick={toggleTransport} className="circular-button" style={{ boxSizing: 'border-box', width: '29px', height: '29px', border: '2px solid #FFFFFF', borderRadius: '50%', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                {transport === TransportStatus.STOPPED ? (
-                  <div style={{ width: '10.58px', height: '10.58px', background: '#FFFFFF', clipPath: 'polygon(0 0, 0 100%, 100% 50%)', transform: 'translateX(1px)' }} />
-                ) : (
-                  <div style={{ width: '8px', height: '8px', background: '#FFFFFF' }} />
-                )}
-              </button>
-              <button onClick={toggleRecord} className="circular-button" style={{ boxSizing: 'border-box', width: '29px', height: '29px', border: '2px solid #FFFFFF', borderRadius: '50%', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                <div className="circular-button" style={{ width: '11px', height: '11px', background: transport === TransportStatus.RECORDING ? '#FF0000' : '#FFFFFF', borderRadius: '50%' }} />
-              </button>
-            </div>
+            <TransportButtons
+              transport={props.transport}
+              onPlayStop={props.toggleTransport}
+              onRecord={props.toggleRecord}
+            />
                             
             <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: '#FFFFFF', textTransform: 'uppercase', marginTop: '-2px' }}>
-              {transport !== TransportStatus.STOPPED ? (isSongMode ? currentStep?.name : activePattern?.name) : 'STANDBY'}
+              {props.transport !== TransportStatus.STOPPED ? (props.isSongMode ? props.currentStep?.name : props.activePattern?.name) : 'STANDBY'}
             </div>
           </div>
 
           {/* Current Time Segment Display - 14px below buttons (buttons end at 52px from top, so this starts at 66px) */}
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '34px' }}>
-            <SegmentDisplay value={formatTimeForDisplay(currentSongTime)} size="large" />
+            <SegmentDisplay value={formatTimeForDisplay(props.currentSongTime)} size="large" />
           </div>
 
           {/* Total Time Segment Display - 14px below current time */}
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '14px' }}>
-            <SegmentDisplay value={formatTimeForDisplay(totalSongDuration)} size="small" />
+            <SegmentDisplay value={formatTimeForDisplay(props.totalSongDuration)} size="small" />
           </div>
                               
           {/* Beat Indicators - 17px below total time */}
           <div className="flex gap-px h-1" style={{ marginTop: '17px' }}>
-            {Array.from({ length: Math.max(PADS_PER_BANK, visualBeatsCount) }).map((_, i) => (
-              <div key={i} ref={el => { beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? '#666666' : '#444444' }} className="flex-1" />
+            {Array.from({ length: Math.max(PADS_PER_BANK, props.visualBeatsCount) }).map((_, i) => (
+              <div key={i} ref={el => { props.beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? '#666666' : '#444444' }} className="flex-1" />
             ))}
           </div>
 
           {/* Progress Bar - 8px below beat indicators */}
           <div className="h-px w-full bg-[#333333] relative" style={{ marginTop: '8px' }}>
-            <div ref={progressBarRef} className="h-full absolute" style={{ backgroundColor: '#FFFFFF' }} />
+            <div ref={props.progressBarRef} className="h-full absolute" style={{ backgroundColor: '#FFFFFF' }} />
           </div>
         </div>
 
         {/* MIDDLE CENTER - Pad Grid - 36px below progress bar, centered to frame (same 56px offset) */}
         <div style={{ flexShrink: 0, paddingTop: '36px', marginLeft: '56px' }} className="flex flex-col pb-3">
-          <PadGrid pads={currentBankPads} activePadIds={activePadIds} selectedPadId={selectedPadId} onPadClick={(id) => { 
-            if (selectedPadId !== id) { stopPreview(); }
-            setSelectedPadId(id);
+          <PadGrid pads={props.currentBankPads} activePadIds={props.activePadIds} selectedPadId={props.selectedPadId} onPadClick={(id) => { 
+            if (props.selectedPadId !== id) { props.stopPreview(); }
+            props.setSelectedPadId(id);
             // Also select the pad's sample in the library
-            const pad = pads.find(p => p.id === id);
+            const pad = props.pads.find(p => p.id === id);
             if (pad?.sampleId) {
-              setSelectedSampleId(pad.sampleId);
+              props.setSelectedSampleId(pad.sampleId);
             }
-            triggerPad(id); 
+            props.triggerPad(id); 
           }} />
         </div>
                           
@@ -2178,12 +2516,13 @@ export default function App() {
         }}
       >
         <EffectsPanel
-          pad={selectedPadId !== null ? pads.find(p => p.id === selectedPadId) ?? null : null}
+          pad={props.selectedPadId !== null ? props.pads.find(p => p.id === props.selectedPadId) ?? null : null}
           onPadChange={(updates) => {
-            if (selectedPadId === null) return;
-            setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, ...updates } : p));
+            if (props.selectedPadId === null) return;
+            props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, ...updates } : p));
           }}
         />
+        <HintDisplay defaultHint={props.defaultHint} />
       </div>
 
       {/* Bank Selectors - Positioned below Effects Panel */}
@@ -2203,20 +2542,20 @@ export default function App() {
         }}
       >
         <SongBankOverlay
-          activeBankIdx={activeArrIdx}
+          activeBankIdx={props.activeArrIdx}
           onBankChange={(idx) => {
             // Always allow 0-3, create bank if it doesn't exist
             if (idx >= 0 && idx < MAX_ARRANGEMENT_BANKS) {
               // Ensure we have enough banks
-              setArrangementBanks(prev => {
+              props.setArrangementBanks(prev => {
                 const newBanks = [...prev];
                 while (newBanks.length <= idx) {
-                  const firstPatternId = patterns[0]?.id || randomUUID();
+                  const firstPatternId = props.patterns[0]?.id || randomUUID();
                   newBanks.push(createDefaultArrangement(firstPatternId));
                 }
                 return newBanks;
               });
-              setActiveArrIdx(idx);
+              props.setActiveArrIdx(idx);
             }
           }}
         />
@@ -2231,21 +2570,21 @@ export default function App() {
         }}
       >
         <PadBankOverlay
-          activeBankIdx={activeBankIdx}
+          activeBankIdx={props.activeBankIdx}
           onBankChange={(idx) => {
             // Always allow 0-3, create bank if it doesn't exist
             if (idx >= 0 && idx < MAX_ARRANGEMENT_BANKS) {
-              const currentBankCount = Math.floor(pads.length / PADS_PER_BANK);
+              const currentBankCount = Math.floor(props.pads.length / PADS_PER_BANK);
               if (idx >= currentBankCount) {
                 // Create new banks as needed
                 const banksToAdd = idx - currentBankCount + 1;
-                const newPads = [...pads];
+                const newPads = [...props.pads];
                 for (let i = 0; i < banksToAdd; i++) {
                   newPads.push(...createBank(currentBankCount + i));
                 }
-                setPads(newPads);
+                props.setPads(newPads);
               }
-              setActiveBankIdx(idx);
+              props.setActiveBankIdx(idx);
             }
           }}
         />
@@ -2265,23 +2604,23 @@ export default function App() {
           {/* Metronome - 131x100, positioned at x=964 relative to frame, so 964-903=61px from right column left */}
           <div style={{ position: 'absolute', left: '61px' }}>
             <Metronome
-              tempo={tempo}
-              isEnabled={isMetronomeEnabled}
-              isPlaying={transport !== TransportStatus.STOPPED}
-              onToggle={() => setIsMetronomeEnabled(!isMetronomeEnabled)}
+              tempo={props.tempo}
+              isEnabled={props.isMetronomeEnabled}
+              isPlaying={props.transport !== TransportStatus.STOPPED}
+              onToggle={() => props.setIsMetronomeEnabled(!props.isMetronomeEnabled)}
             />
           </div>
           
           {/* Tempo Dial - 99x100, positioned at x=1125 relative to frame, so 1125-903=222px from right column left */}
           <div style={{ position: 'absolute', left: '222px' }}>
             <TempoDial
-              tempo={tempo}
-              onTempoChange={(newTempo) => setTempo(clampTempo(newTempo))}
-              isDragging={isDraggingTempo}
-              onDragStart={() => setIsDraggingTempo(true)}
-              onDragEnd={() => setIsDraggingTempo(false)}
-              onTap={handleTap}
-              isTapping={isTapping}
+              tempo={props.tempo}
+              onTempoChange={(newTempo) => props.setTempo(clampTempo(newTempo))}
+              isDragging={props.isDraggingTempo}
+              onDragStart={() => props.setIsDraggingTempo(true)}
+              onDragEnd={() => props.setIsDraggingTempo(false)}
+              onTap={props.handleTap}
+              isTapping={props.isTapping}
             />
           </div>
         </div>
@@ -2290,8 +2629,8 @@ export default function App() {
         {/* Waveform Editor: x=944 (41px from right column left), y=190, width=313, height=300 */}
         <div style={{ position: 'absolute', top: '190px', left: '41px' }}>
           {(() => {
-            const pad = selectedPadId !== null ? pads.find(p => p.id === selectedPadId) : null;
-            const sample = pad?.sampleId ? samples.find(s => s.id === pad.sampleId) : null;
+            const pad = props.selectedPadId !== null ? props.pads.find(p => p.id === props.selectedPadId) : null;
+            const sample = pad?.sampleId ? props.samples.find(s => s.id === pad.sampleId) : null;
             
             // Create a dummy empty sample when there's no sample to load
             const emptySample: SampleData = {
@@ -2309,29 +2648,29 @@ export default function App() {
                 start={activePad.start} 
                 end={activePad.end || (activeSample.buffer.duration || 0.001)} 
                 onUpdate={(start, end) => {
-                  if (selectedPadId !== null) {
-                    setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, start, end } : p));
+                  if (props.selectedPadId !== null) {
+                    props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, start, end } : p));
                   }
                 }} 
                 onPreview={(time, looping) => {
-                  if (selectedPadId !== null && sample) {
-                    triggerPad(selectedPadId, time, looping);
+                  if (props.selectedPadId !== null && sample) {
+                    props.triggerPad(props.selectedPadId, time, looping);
                   }
                 }}
-                playbackTrigger={selectedPadId !== null && lastTriggerInfo?.padId === selectedPadId ? lastTriggerInfo.trigger : null}
-                previewActive={selectedPadId !== null && previewActive && previewingPadId === selectedPadId}
-                onLoopStop={() => setLastTriggerInfo(null)}
-                padId={selectedPadId || undefined}
+                playbackTrigger={props.selectedPadId !== null && props.lastTriggerInfo?.padId === props.selectedPadId ? props.lastTriggerInfo.trigger : null}
+                previewActive={props.selectedPadId !== null && props.previewActive && props.previewingPadId === props.selectedPadId}
+                onLoopStop={() => props.setLastTriggerInfo(null)}
+                padId={props.selectedPadId || undefined}
                 isReversed={activePad.isReversed}
                 playMode={activePad.playMode}
                 onToggleReverse={() => {
-                  if (selectedPadId !== null) {
-                    setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, isReversed: !p.isReversed } : p));
+                  if (props.selectedPadId !== null) {
+                    props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, isReversed: !p.isReversed } : p));
                   }
                 }}
                 onTogglePlayMode={() => {
-                  if (selectedPadId !== null) {
-                    setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, playMode: p.playMode === 'POLY' ? 'MONO' : 'POLY' } : p));
+                  if (props.selectedPadId !== null) {
+                    props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, playMode: p.playMode === 'POLY' ? 'MONO' : 'POLY' } : p));
                   }
                 }}
               />
@@ -2343,7 +2682,7 @@ export default function App() {
         {/* Sample Library: x=943 (40px from right column left), y=594, width=313, height=214 */}
         <div style={{ position: 'absolute', top: '594px', left: '40px' }}>
           <SampleLibrary
-            samples={samples}
+            samples={props.samples}
             onLoadSample={() => {
               const input = document.createElement('input');
               input.type = 'file';
@@ -2358,8 +2697,8 @@ export default function App() {
                   const id = randomUUID();
                   await saveSample(id, file.name, ab, 0, buffer.duration);
                   // Prepend new sample so it appears at the top (newest first)
-                  setSamples(prev => [{ id, name: file.name, buffer }, ...prev]);
-                  setSelectedSampleId(id);
+                  props.setSamples(prev => [{ id, name: file.name, buffer }, ...prev]);
+                  props.setSelectedSampleId(id);
                 } catch (err) {
                   console.error("Failed to import sample:", err);
                   alert(`Failed to import sample: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -2370,27 +2709,27 @@ export default function App() {
             onSampleSelect={(sampleId) => {
               if (sampleId === null) {
                 // Deselecting - clear sample selection and unassign from pad
-                setSelectedSampleId(null);
-                if (selectedPadId !== null) {
-                  setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, sampleId: null, start: 0, end: 0 } : p));
+                props.setSelectedSampleId(null);
+                if (props.selectedPadId !== null) {
+                  props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, sampleId: null, start: 0, end: 0 } : p));
                 }
               } else {
-                setSelectedSampleId(sampleId);
+                props.setSelectedSampleId(sampleId);
                 // If a pad is selected, assign the sample to it
-                if (selectedPadId !== null) {
-                  const sample = samples.find(s => s.id === sampleId);
+                if (props.selectedPadId !== null) {
+                  const sample = props.samples.find(s => s.id === sampleId);
                   if (sample) {
-                    setPads(prev => prev.map(p => p.id === selectedPadId ? { ...p, sampleId: sampleId, start: 0, end: sample.buffer.duration } : p));
+                    props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, sampleId: sampleId, start: 0, end: sample.buffer.duration } : p));
                   }
                 }
               }
             }}
-            selectedSampleId={selectedSampleId}
+            selectedSampleId={props.selectedSampleId}
             onSamplesChange={(newSamples) => {
-              setSamples(newSamples);
+              props.setSamples(newSamples);
               // Clear selectedSampleId if the selected sample was deleted
-              if (selectedSampleId && !newSamples.find(s => s.id === selectedSampleId)) {
-                setSelectedSampleId(null);
+              if (props.selectedSampleId && !newSamples.find(s => s.id === props.selectedSampleId)) {
+                props.setSelectedSampleId(null);
               }
             }}
           />

@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { useHint } from './HintDisplay';
 
 type FilterType = 'lowpass' | 'highpass' | 'bandpass';
 
@@ -21,6 +22,7 @@ const FILTER_DISPLAY_LABELS: Record<FilterType, string> = {
 };
 
 const FilterToggle: React.FC<FilterToggleProps> = ({ value, onChange, onHover }) => {
+  const { setHint } = useHint();
   const diameter = 30;
   const strokeWidth = 2;
   const center = diameter / 2;
@@ -33,12 +35,14 @@ const FilterToggle: React.FC<FilterToggleProps> = ({ value, onChange, onHover })
   }, [value, onChange, onHover]);
 
   const handleMouseEnter = useCallback(() => {
+    setHint('FILTER TYPE · TOGGLE');
     onHover?.(true, FILTER_DISPLAY_LABELS[value]);
-  }, [onHover, value]);
+  }, [onHover, value, setHint]);
 
   const handleMouseLeave = useCallback(() => {
+    setHint(null);
     onHover?.(false, null);
-  }, [onHover]);
+  }, [onHover, setHint]);
 
   return (
     <div

@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { PadConfig } from '../types';
+import { useHint } from './HintDisplay';
 
 interface PadGridProps {
   pads: PadConfig[];
@@ -11,6 +12,15 @@ interface PadGridProps {
 
 const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, onPadClick }) => {
   const [hoveredPadId, setHoveredPadId] = useState<number | null>(null);
+  const { setHint } = useHint();
+
+  const getPadHint = (pad: PadConfig, index: number): string => {
+    const padNumber = index + 1; // 1-16 within current bank
+    if (!pad.sampleId) {
+      return `PAD ${padNumber} [${pad.keyLabel}]`;
+    }
+    return `PAD ${padNumber} [${pad.keyLabel}]`;
+  };
   
   return (
     <div 
@@ -25,7 +35,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
         alignContent: 'center'
       }}
     >
-      {pads.map((pad) => {
+      {pads.map((pad, index) => {
         const isActive = activePadIds.has(pad.id);
         const isHovered = hoveredPadId === pad.id;
         // Show hover style when hovered but not when active (flashing)
@@ -35,8 +45,14 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
           <button
             key={pad.id}
             onMouseDown={() => onPadClick(pad.id)}
-            onMouseEnter={() => setHoveredPadId(pad.id)}
-            onMouseLeave={() => setHoveredPadId(null)}
+            onMouseEnter={() => {
+              setHoveredPadId(pad.id);
+              setHint(getPadHint(pad, index));
+            }}
+            onMouseLeave={() => {
+              setHoveredPadId(null);
+              setHint(null);
+            }}
             className={isActive ? 'pad-active' : ''}
             style={{
               width: '96px',

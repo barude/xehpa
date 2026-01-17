@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
 import SegmentDisplay from './SegmentDisplay';
 import { TEMPO_MIN, TEMPO_MAX } from '../constants';
+import { useHint } from './HintDisplay';
 
 interface TempoDialProps {
   tempo: number;
@@ -47,6 +48,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
   const dragStartYRef = useRef(0);
   const dragStartTempoRef = useRef(0);
   const [isHovered, setIsHovered] = useState(false);
+  const { setHint } = useHint();
 
   // Convert BPM to angle (degrees, 0° = top, clockwise positive)
   const bpmToAngle = (bpm: number): number => {
@@ -173,8 +175,14 @@ const TempoDial: React.FC<TempoDialProps> = ({
       }}
       onMouseDown={handleMouseDown}
       onWheel={handleWheel}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        setHint('TEMPO · TAP [T]');
+      }}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        setHint(null);
+      }}
     >
       {/* SVG Dial Background */}
       <svg
