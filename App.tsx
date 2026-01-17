@@ -509,7 +509,7 @@ export default function App() {
             if (!ref) return;
             const isDownbeat = idx % BEATS_PER_BAR === 0;
             if (idx === exactVisualBeat) ref.style.backgroundColor = '#FFFFFF';
-            else ref.style.backgroundColor = isDownbeat ? '#333333' : '#111111';
+            else ref.style.backgroundColor = isDownbeat ? '#666666' : '#444444';
         });
     }
 
@@ -652,7 +652,7 @@ export default function App() {
       lastVisualBeatRef.current = -1;
       beatIndicatorRefs.current.forEach((ref, idx) => {
           if (!ref) return;
-          ref.style.backgroundColor = idx % 4 === 0 ? '#333333' : '#111111';
+          ref.style.backgroundColor = idx % 4 === 0 ? '#666666' : '#444444';
       });
       if (progressBarRef.current) progressBarRef.current.style.width = '0%';
       // Release wake lock when stopped
@@ -855,7 +855,7 @@ export default function App() {
     if (progressBarRef.current) progressBarRef.current.style.width = '0%';
     beatIndicatorRefs.current.forEach((ref, idx) => {
       if (!ref) return;
-      ref.style.backgroundColor = idx % 4 === 0 ? '#333333' : '#111111';
+      ref.style.backgroundColor = idx % 4 === 0 ? '#666666' : '#444444';
     });
 
     // Clear localStorage
@@ -1060,10 +1060,21 @@ export default function App() {
       
       const bankPads = padsRef.current.slice(activeBankIdx * PADS_PER_BANK, (activeBankIdx + 1) * PADS_PER_BANK);
       const pad = bankPads.find(p => p.keyCode === e.code);
-      if (pad) { e.preventDefault(); triggerPad(pad.id); }
+      if (pad) { 
+        e.preventDefault(); 
+        // If pad is unassigned (no sample), automatically select it for editing
+        const sample = samplesRef.current.find(s => s.id === pad.sampleId);
+        if (!pad.sampleId || !sample) {
+          setSelectedPadId(pad.id);
+        }
+        triggerPad(pad.id); 
+      }
       
       if (e.code === 'Space') { e.preventDefault(); toggleTransport(); }
       if (e.code === 'KeyT') { e.preventDefault(); handleTap(); }
+      if (e.code === 'KeyM') { e.preventDefault(); setIsMetronomeEnabled(prev => !prev); }
+      
+      if (e.altKey && e.metaKey) { e.preventDefault(); setIsSongMode(prev => !prev); }
       
       if (e.altKey && e.code.startsWith('Digit')) {
         const num = parseInt(e.code.replace('Digit', '')) - 1;
@@ -1075,6 +1086,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [triggerPad, activeBankIdx, toggleTransport, handleTap]);
 
+  // Audio analysis for reactive visuals - runs continuously to react to ALL audio
   // Blur buttons after mouse click to prevent spacebar from triggering them
   useEffect(() => {
     const handleMouseUp = (e: MouseEvent) => {
@@ -1103,7 +1115,7 @@ export default function App() {
         style={{ transform: `scale(${frameScale})` }}
       >
         <div className="app-content relative flex h-full overflow-hidden bg-black text-[#4a4a4a] font-mono">
-      {/* Dividers - pixel-perfect dividers matching the design */}
+      {/* Dividers - reactive spectrum bars that respond to audio */}
       <Dividers />
       
       {isProjectLoading && (
@@ -2128,12 +2140,12 @@ export default function App() {
           {/* Beat Indicators - 17px below total time */}
           <div className="flex gap-px h-1" style={{ marginTop: '17px' }}>
             {Array.from({ length: Math.max(PADS_PER_BANK, visualBeatsCount) }).map((_, i) => (
-              <div key={i} ref={el => { beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? '#333333' : '#111111' }} className="flex-1" />
+              <div key={i} ref={el => { beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? '#666666' : '#444444' }} className="flex-1" />
             ))}
           </div>
 
           {/* Progress Bar - 8px below beat indicators */}
-          <div className="h-px w-full bg-[#1a1a1a] relative" style={{ marginTop: '8px' }}>
+          <div className="h-px w-full bg-[#333333] relative" style={{ marginTop: '8px' }}>
             <div ref={progressBarRef} className="h-full absolute" style={{ backgroundColor: '#FFFFFF' }} />
           </div>
         </div>

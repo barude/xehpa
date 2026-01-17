@@ -276,13 +276,10 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   // Restart loop when start/end changes during loop playback
   useEffect(() => {
     if (isLoopingPreview && previewActive) {
-      // Only restart if start/end actually changed (avoid infinite loops)
-      if (lastLoopStartRef.current !== start || lastLoopEndRef.current !== end) {
-        lastLoopStartRef.current = start;
-        lastLoopEndRef.current = end;
-        audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
-        runPreviewAt(start, true);
-      }
+      // Stop the current loop
+      audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
+      // Restart loop with new start/end values
+      runPreviewAt(start, true);
     }
   }, [start, end, isLoopingPreview, previewActive, runPreviewAt]);
 
@@ -291,17 +288,10 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       setIsLoopingPreview(false);
       isPreviewingRef.current = false;
       audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
+      // Clear playbackTrigger when loop is turned off
       if (onLoopStop) onLoopStop();
     } else {
-      // Validate start/end before looping - handle crossed sliders
-      const loopDur = Math.abs(end - start);
-      if (loopDur < 0.001) {
-        console.warn('Cannot start loop: invalid start/end range', { start, end });
-        return;
-      }
-      // Always start from the leftmost position
-      const leftPos = Math.min(start, end);
-      runPreviewAt(leftPos, true);
+      runPreviewAt(start, true);
     }
   };
 
@@ -548,73 +538,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         }
       }
 
-      // Draw S and E markers
-      // Always show S on left, E on right, but determine focus based on which value matches focusMode
-      const drawMarker = (x: number, label: 'S' | 'E', isFocus: boolean) => {
-        if (x < -20 || x > displayWidth + 20) return;
-        
-        // Draw vertical line - thicker and white when focused
-        ctx.strokeStyle = isFocus ? '#FFFFFF' : '#000000';
-        ctx.lineWidth = isFocus ? 3 : 2;
-        ctx.beginPath(); 
-        ctx.moveTo(x, 0); 
-        ctx.lineTo(x, displayHeight); 
-        ctx.stroke();
-        
-        // Draw rectangular handle - white background when focused, black when not
-        const handleWidth = 14;
-        const handleHeight = 16;
-        
-        // Handle background color based on focus
-        ctx.fillStyle = isFocus ? '#FFFFFF' : '#000000';
-        
-        if (label === 'S') {
-          // S handle: top right of the line (pointing into selection)
-          ctx.fillRect(x, 0, handleWidth, handleHeight);
-          
-          // Add white outline when focused for extra visibility
-          if (isFocus) {
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x, 0, handleWidth, handleHeight);
-          }
-          
-          // Text color: black when focused (on white background), white when not (on black background)
-          ctx.fillStyle = isFocus ? '#000000' : '#FFFFFF';
-          ctx.font = '600 11px Barlow Condensed';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(label, x + handleWidth / 2, handleHeight / 2);
-        } else {
-          // E handle: bottom left of the line (pointing into selection)
-          ctx.fillRect(x - handleWidth, displayHeight - handleHeight, handleWidth, handleHeight);
-          
-          // Add white outline when focused for extra visibility
-          if (isFocus) {
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x - handleWidth, displayHeight - handleHeight, handleWidth, handleHeight);
-          }
-          
-          // Text color: black when focused (on white background), white when not (on black background)
-          ctx.fillStyle = isFocus ? '#000000' : '#FFFFFF';
-          ctx.font = '600 11px Barlow Condensed';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(label, x - handleWidth / 2, displayHeight - handleHeight / 2);
-        }
-      };
-
-      // Determine which marker is focused based on focusMode and actual positions
-      // If start > end, then start is on the right, end is on the left
-      const isStartOnLeft = start <= end;
-      const leftMarkerLabel: 'S' | 'E' = isStartOnLeft ? 'S' : 'E';
-      const rightMarkerLabel: 'S' | 'E' = isStartOnLeft ? 'E' : 'S';
-      const leftMarkerFocused = (isStartOnLeft && focusMode === 'start') || (!isStartOnLeft && focusMode === 'end');
-      const rightMarkerFocused = (isStartOnLeft && focusMode === 'end') || (!isStartOnLeft && focusMode === 'start');
-
-      drawMarker(leftX, leftMarkerLabel, leftMarkerFocused);
-      drawMarker(rightX, rightMarkerLabel, rightMarkerFocused);
+      // Slider markers removed - waveform inversion shows the selected region
 
       if (isRendering) {
         animationRef.current = requestAnimationFrame(render);

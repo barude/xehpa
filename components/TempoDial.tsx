@@ -46,6 +46,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
   const isDraggingRef = useRef(false);
   const dragStartYRef = useRef(0);
   const dragStartTempoRef = useRef(0);
+  const [isHovered, setIsHovered] = useState(false);
 
   // Convert BPM to angle (degrees, 0° = top, clockwise positive)
   const bpmToAngle = (bpm: number): number => {
@@ -172,6 +173,8 @@ const TempoDial: React.FC<TempoDialProps> = ({
       }}
       onMouseDown={handleMouseDown}
       onWheel={handleWheel}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       {/* SVG Dial Background */}
       <svg
@@ -187,7 +190,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
           cy={CENTER_Y}
           r={OUTER_RADIUS}
           fill="none"
-          stroke="rgba(255,255,255,0.3)"
+          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.3)"}
           strokeWidth="1"
         />
         
