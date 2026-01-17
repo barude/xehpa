@@ -1073,7 +1073,14 @@ export default function App() {
         triggerPad(pad.id); 
       }
       
-      if (e.code === 'Space') { e.preventDefault(); toggleTransport(); }
+      if (e.code === 'Space') { 
+        e.preventDefault(); 
+        if (e.altKey) {
+          toggleRecord();
+        } else {
+          toggleTransport(); 
+        }
+      }
       if (e.code === 'KeyT') { e.preventDefault(); handleTap(); }
       if (e.code === 'KeyM') { e.preventDefault(); setIsMetronomeEnabled(prev => !prev); }
       
@@ -1087,7 +1094,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [triggerPad, activeBankIdx, toggleTransport, handleTap]);
+  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap]);
 
   // Audio analysis for reactive visuals - runs continuously to react to ALL audio
   // Blur buttons after mouse click to prevent spacebar from triggering them
@@ -1144,7 +1151,7 @@ export default function App() {
     if (!hasPatternsWithHits) {
       // If in Pattern Mode and stopped, be more explicit about recording
       if (!isSongMode && transport === TransportStatus.STOPPED) {
-        return 'SELECT PATTERN · PRESS RECORD';
+        return 'SELECT PATTERN · PRESS RECORD [ALT+SPACE]';
       }
       return 'RECORD A PATTERN';
     }
@@ -2466,12 +2473,20 @@ const AppContent: React.FC<{
           </div>
 
           {/* Current Time Segment Display - 14px below buttons (buttons end at 52px from top, so this starts at 66px) */}
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '34px' }}>
+          <div 
+            style={{ display: 'flex', justifyContent: 'center', marginTop: '34px' }}
+            onMouseEnter={() => setHint('TIME: CURRENT POSITION')}
+            onMouseLeave={() => setHint(null)}
+          >
             <SegmentDisplay value={formatTimeForDisplay(props.currentSongTime)} size="large" />
           </div>
 
           {/* Total Time Segment Display - 14px below current time */}
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '14px' }}>
+          <div 
+            style={{ display: 'flex', justifyContent: 'center', marginTop: '14px' }}
+            onMouseEnter={() => setHint('TIME: TOTAL DURATION')}
+            onMouseLeave={() => setHint(null)}
+          >
             <SegmentDisplay value={formatTimeForDisplay(props.totalSongDuration)} size="small" />
           </div>
                               

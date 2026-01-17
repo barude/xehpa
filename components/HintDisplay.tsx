@@ -45,6 +45,7 @@ export const HintDisplay: React.FC<HintDisplayProps> = ({ defaultHint }) => {
       style={{
         fontFamily: "'Barlow Condensed', sans-serif",
         fontSize: '11px',
+        fontWeight: 400,
         color: '#FFFFFF',
         textTransform: 'uppercase',
         letterSpacing: '0.05em',

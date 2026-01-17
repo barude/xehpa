@@ -29,7 +29,7 @@ const TransportButtons: React.FC<TransportButtonsProps> = ({ transport, onPlaySt
       <button 
         onClick={onRecord} 
         className="circular-button" 
-        onMouseEnter={() => setHint('RECORD')}
+        onMouseEnter={() => setHint('RECORD [ALT+SPACE]')}
         onMouseLeave={() => setHint(null)}
         style={{ boxSizing: 'border-box', width: '29px', height: '29px', border: '2px solid #FFFFFF', borderRadius: '50%', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
       >
