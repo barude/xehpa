@@ -1840,7 +1840,7 @@ const AppContent: React.FC<{
                               }}
                               onMouseEnter={() => setHint('DUPLICATE SECTION')}
                               onMouseLeave={() => setHint(null)}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
                               DUPLICATE
@@ -1857,7 +1857,7 @@ const AppContent: React.FC<{
                               }}
                               onMouseEnter={() => setHint('DELETE SECTION')}
                               onMouseLeave={() => setHint(null)}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-white hover:text-black group-hover/section:border-black group-hover/section:text-black'}`}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'}`}
                               style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
                             >
                               DELETE
