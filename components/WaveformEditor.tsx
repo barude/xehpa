@@ -455,8 +455,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   
   // Zoom slider is 32px below waveform
   const ZOOM_SLIDER_TOP = WAVE_BOTTOM + 32; // 273
-  // Zoom counter is 7px above zoom slider, right-aligned with slider
-  const ZOOM_COUNTER_TOP = ZOOM_SLIDER_TOP - 7 - 12; // 256
   // Instructions are 17px below zoom slider, centered
   const INSTRUCTIONS_TOP = ZOOM_SLIDER_TOP + 17; // 292
   
@@ -1079,23 +1077,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           }}
         />
         </div>
-
-      {/* ZOOM COUNTER */}
-      <div style={{
-        position: 'absolute',
-        fontFamily: 'Barlow Condensed',
-        fontStyle: 'normal',
-        fontWeight: 400,
-        fontSize: '10px',
-        lineHeight: '12px',
-        color: '#FFFFFF',
-        top: `${ZOOM_COUNTER_TOP}px`,
-        right: '0px',
-        whiteSpace: 'nowrap',
-        textAlign: 'right'
-      }}>
-        ZOOM: {zoom.toFixed(0)}
-      </div>
 
       {/* Instructions - centered with slider */}
       <div style={{
