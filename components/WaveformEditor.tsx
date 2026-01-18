@@ -145,6 +145,11 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
     onUpdate(start, clampedVal);
   }, [start, duration, onUpdate]);
 
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Prevent context menu for right-click secret shortcut
+    e.preventDefault();
+  };
+
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -152,6 +157,43 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
     const rect = canvas.getBoundingClientRect();
     const normalizedX = (e.clientX - rect.left) / rect.width;
     const timeAtX = effectiveOffset + normalizedX * viewDuration;
+
+    // Secret shortcut: right-click sets end slider and switches to END mode
+    if (e.button === 2) {
+      e.preventDefault();
+      const newEnd = Math.max(0, Math.min(timeAtX, duration));
+      updateEnd(newEnd);
+      setLocalFocusMode('end');
+      // Also initiate drag for right-click
+      setIsDragging(true);
+      setDragTarget('end');
+      
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const moveRect = canvas.getBoundingClientRect();
+        const moveNormX = (moveEvent.clientX - moveRect.left) / moveRect.width;
+        const moveTime = effectiveOffset + moveNormX * viewDuration;
+        const newEnd = Math.max(0, Math.min(moveTime, duration));
+        if (newEnd < start) {
+          // Crossed past start - swap
+          onUpdate(newEnd, start);
+          setLocalFocusMode('start');
+          setDragTarget('start');
+        } else {
+          updateEnd(moveTime);
+        }
+      };
+
+      const handleMouseUp = () => {
+        setIsDragging(false);
+        setDragTarget(null);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return;
+    }
 
     if (e.altKey || isAltHeld) {
       runPreviewAt(timeAtX, false);
@@ -208,30 +250,18 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         setLocalFocusMode(target);
       }
     } else {
-      // Clicking away from both sliders - use the currently focused one
-      // Handle potential crossover when clicking
-      if (activeFocusMode === 'start') {
-        const newStart = Math.max(0, Math.min(timeAtX, duration));
-        if (newStart > end) {
-          // Crossed past end - swap
-          onUpdate(end, newStart);
-          setLocalFocusMode('end');
-          setDragTarget('end');
-        } else {
-          updateStart(timeAtX);
-          setDragTarget('start');
-        }
+      // Clicking away from both sliders - secret shortcut: always set START by default
+      const newStart = Math.max(0, Math.min(timeAtX, duration));
+      if (newStart > end) {
+        // Crossed past end - swap
+        onUpdate(end, newStart);
+        setLocalFocusMode('end');
+        setDragTarget('end');
       } else {
-        const newEnd = Math.max(0, Math.min(timeAtX, duration));
-        if (newEnd < start) {
-          // Crossed past start - swap
-          onUpdate(newEnd, start);
-          setLocalFocusMode('start');
-          setDragTarget('start');
-        } else {
-          updateEnd(timeAtX);
-          setDragTarget('end');
-        }
+        updateStart(timeAtX);
+        setDragTarget('start');
+        // Always switch to START mode when clicking away from sliders (secret shortcut)
+        setLocalFocusMode('start');
       }
       setIsDragging(true);
     }
@@ -279,11 +309,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.altKey) setIsAltHeld(true);
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const newFocusMode = activeFocusMode === 'start' ? 'end' : 'start';
-        setLocalFocusMode(newFocusMode);
-      }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const nudge = e.shiftKey ? 0.05 : 0.001;
         const dir = e.key === 'ArrowLeft' ? -1 : 1;
@@ -684,7 +709,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         onClick={() => {
           setLocalFocusMode('start');
         }}
-        onMouseEnter={() => setHint('START · SET POINT [TAB]')}
+        onMouseEnter={() => setHint('START · SET POINT [LEFT CLICK]')}
         onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
@@ -723,7 +748,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         onClick={() => {
           setLocalFocusMode('end');
         }}
-        onMouseEnter={() => setHint('END · SET POINT [TAB]')}
+        onMouseEnter={() => setHint('END · SET POINT [RIGHT CLICK]')}
         onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
@@ -926,13 +951,20 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         <canvas 
           ref={canvasRef} 
           onMouseDown={handleCanvasMouseDown}
-          onMouseEnter={() => setHint('WAVEFORM · DRAG OR ALT+CLICK')}
+          onContextMenu={handleCanvasContextMenu}
+          onMouseEnter={() => setHint('WAVEFORM · LEFT/RIGHT CLICK')}
           onMouseLeave={() => setHint(null)}
           style={{
             width: '100%',
             height: '100%',
             display: 'block',
             cursor: isAltHeld ? 'crosshair' : 'default'
+          }}
+          onAuxClick={(e) => {
+            // Prevent context menu on right-click (auxclick is for non-primary buttons)
+            if (e.button === 2) {
+              e.preventDefault();
+            }
           }}
         />
       </div>
@@ -1088,9 +1120,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           ALT+CLICK: PLAY
         </div>
 
-        {/* TAB: SWITCH SLIDERS */}
+        {/* L/R CLICK: SWITCH POINT */}
         <div style={{
-          width: '72px',
+          width: '81px',
           height: '12px',
           fontFamily: 'Barlow Condensed',
           fontStyle: 'normal',
@@ -1099,7 +1131,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           lineHeight: '12px',
           color: '#FFFFFF'
         }}>
-          TAB: SWITCH SLIDERS
+          L/R CLICK: SWITCH POINT
         </div>
 
         {/* PINCH: ZOOM */}
