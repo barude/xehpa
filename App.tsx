@@ -26,6 +26,7 @@ import { createBank } from './utils/pads';
 import { isTyping } from './utils/dom';
 import { formatTimeForDisplay } from './utils/formatting';
 import { TEMPO_MIN, TEMPO_MAX, TEMPO_DEFAULT, PADS_PER_BANK, MAX_PADS, MAX_ARRANGEMENT_BANKS, DEFAULT_PATTERN_BARS, BEATS_PER_BAR, BANK_LETTERS, PATTERN_BAR_OPTIONS, MAX_HITS_PER_PATTERN } from './constants';
+import loadJSZip from './services/jszip-shim';
 
 const INITIAL_PATTERN: Pattern = {
   id: randomUUID(),
@@ -897,24 +898,37 @@ export default function App() {
 
   const saveProject = async () => {
     const dbSamples = await getAllSamples();
-    const portableSamples = dbSamples.map(s => ({
-      id: s.id,
-      name: s.name,
-      base64Data: arrayBufferToBase64(s.data)
-    }));
-
-    const project = { 
+    
+    // Load JSZip
+    const JSZip = await loadJSZip();
+    const zip = new JSZip();
+    
+    // Create project.json with metadata (samples reference filenames instead of base64Data)
+    const projectMetadata = { 
       version: CURRENT_PROJECT_VERSION, 
       pads, 
       patterns, 
       arrangementBanks, 
       tempo,
-      samples: portableSamples 
+      samples: dbSamples.map(s => ({
+        id: s.id,
+        name: s.name,
+        filename: `${s.id}.wav` // Reference to file in samples folder
+      }))
     };
     
-    const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
+    // Add project.json to ZIP
+    zip.file('project.json', JSON.stringify(projectMetadata, null, 2));
+    
+    // Add all samples as binary .wav files in samples folder
+    for (const sample of dbSamples) {
+      zip.file(`samples/${sample.id}.wav`, sample.data);
+    }
+    
+    // Generate ZIP blob and download
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
     const a = document.createElement('a'); 
-    a.href = URL.createObjectURL(blob); 
+    a.href = URL.createObjectURL(zipBlob); 
     a.download = `XEHPA_Project_${new Date().getTime()}.fck`; 
     a.click();
   };
@@ -1033,10 +1047,42 @@ export default function App() {
     
     setIsProjectLoading(true);
     
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const rawData = JSON.parse(ev.target?.result as string);
+    // Check if file is ZIP (new format) or JSON (old format)
+    // ZIP files start with PK (0x504B), JSON starts with {
+    const fileStart = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const arr = new Uint8Array(e.target?.result as ArrayBuffer);
+        // Check first 2 bytes for ZIP signature (PK = 0x50 0x4B)
+        if (arr.length >= 2 && arr[0] === 0x50 && arr[1] === 0x4B) {
+          resolve('zip');
+        } else {
+          // Try to read as text to check for JSON
+          const text = new TextDecoder().decode(arr.slice(0, 100));
+          if (text.trim().startsWith('{')) {
+            resolve('json');
+          } else {
+            resolve('unknown');
+          }
+        }
+      };
+      reader.readAsArrayBuffer(file.slice(0, 100)); // Read first 100 bytes
+    });
+    
+    try {
+      if (fileStart === 'zip') {
+        // New ZIP format
+        const JSZip = await loadJSZip();
+        const zip = await JSZip.loadAsync(file);
+        
+        // Load project.json
+        const projectJsonFile = zip.file('project.json');
+        if (!projectJsonFile) {
+          throw new Error('Project file is missing project.json');
+        }
+        
+        const projectJsonText = await projectJsonFile.async('string');
+        const rawData = JSON.parse(projectJsonText);
         
         // Migrate project to current version (handles old formats automatically)
         const migratedData = migrateProject(rawData);
@@ -1054,10 +1100,9 @@ export default function App() {
           console.error("Failed to clear existing samples:", err);
         }
         
-        // Load samples if present
+        // Load samples from ZIP samples folder
         if (migratedData.samples && Array.isArray(migratedData.samples)) {
           const baseTime = Date.now();
-          // Assign timestamps in reverse order: first sample (newest) gets highest timestamp
           for (let i = 0; i < migratedData.samples.length; i++) {
             const s = migratedData.samples[i];
             if (!s.id || !s.name) {
@@ -1065,15 +1110,20 @@ export default function App() {
               continue;
             }
             
-            // Support both base64Data (for older formats) and data (for newer formats)
             let sampleData: ArrayBuffer | null = null;
             
-            if (s.base64Data && typeof s.base64Data === 'string') {
-              // Legacy format: base64 encoded
+            // New format: samples stored as binary files
+            if (s.filename) {
+              const sampleFile = zip.file(`samples/${s.filename}`);
+              if (sampleFile) {
+                sampleData = await sampleFile.async('arraybuffer');
+              } else {
+                console.warn(`Sample file not found in ZIP: samples/${s.filename}`);
+                continue;
+              }
+            } else if (s.base64Data && typeof s.base64Data === 'string') {
+              // Fallback: base64 data in JSON (shouldn't happen in ZIP format, but handle it)
               sampleData = base64ToArrayBuffer(s.base64Data);
-            } else if (s.data instanceof ArrayBuffer) {
-              // Direct ArrayBuffer (unlikely in JSON, but handle it)
-              sampleData = s.data;
             } else {
               console.warn("Sample missing audio data:", s.name);
               continue;
@@ -1084,8 +1134,6 @@ export default function App() {
             try {
               const dataCopy = sampleData.slice(0);
               const buffer = await audioEngine.decode(dataCopy);
-              // Assign timestamp: first sample (index 0) is newest, gets baseTime
-              // Subsequent samples get progressively older timestamps
               const createdAt = baseTime - i;
               await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
             } catch (sampleErr) {
@@ -1122,18 +1170,119 @@ export default function App() {
         } else {
           alert("Project Loaded Successfully");
         }
-      } catch (err) {
-        console.error("Load fail", err);
-        alert(`Failed to load project: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      } finally {
         setIsProjectLoading(false);
+      } else if (fileStart === 'json') {
+        // Old JSON format (backward compatibility)
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          try {
+            const rawData = JSON.parse(ev.target?.result as string);
+            
+            // Migrate project to current version (handles old formats automatically)
+            const migratedData = migrateProject(rawData);
+            
+            // Validate migrated project structure
+            const validation = validateProject(migratedData);
+            if (!validation.valid) {
+              throw new Error(`Invalid project structure: ${validation.errors.join('; ')}`);
+            }
+            
+            // Clear existing samples before loading new ones
+            try {
+              await clearAllSamples();
+            } catch (err) {
+              console.error("Failed to clear existing samples:", err);
+            }
+            
+            // Load samples if present
+            if (migratedData.samples && Array.isArray(migratedData.samples)) {
+              const baseTime = Date.now();
+              // Assign timestamps in reverse order: first sample (newest) gets highest timestamp
+              for (let i = 0; i < migratedData.samples.length; i++) {
+                const s = migratedData.samples[i];
+                if (!s.id || !s.name) {
+                  console.warn("Skipping invalid sample:", s);
+                  continue;
+                }
+                
+                // Support both base64Data (for older formats) and data (for newer formats)
+                let sampleData: ArrayBuffer | null = null;
+                
+                if (s.base64Data && typeof s.base64Data === 'string') {
+                  // Legacy format: base64 encoded
+                  sampleData = base64ToArrayBuffer(s.base64Data);
+                } else if (s.data instanceof ArrayBuffer) {
+                  // Direct ArrayBuffer (unlikely in JSON, but handle it)
+                  sampleData = s.data;
+                } else {
+                  console.warn("Sample missing audio data:", s.name);
+                  continue;
+                }
+                
+                if (!sampleData) continue;
+                
+                try {
+                  const dataCopy = sampleData.slice(0);
+                  const buffer = await audioEngine.decode(dataCopy);
+                  // Assign timestamp: first sample (index 0) is newest, gets baseTime
+                  // Subsequent samples get progressively older timestamps
+                  const createdAt = baseTime - i;
+                  await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
+                } catch (sampleErr) {
+                  console.error("Failed to load sample:", s.name, sampleErr);
+                }
+              }
+            }
+            
+            // Apply migrated and validated data
+            setPads(migratedData.pads || []); 
+            setPatterns(migratedData.patterns || []); 
+            setArrangementBanks(migratedData.arrangementBanks || []); 
+            setTempo(clampTempo(migratedData.tempo || TEMPO_DEFAULT));
+            
+            // Set current pattern (ensure it exists)
+            const firstPatternId = migratedData.patterns?.[0]?.id;
+            if (firstPatternId) {
+              setCurrentPatternId(firstPatternId);
+            } else if (patterns.length > 0) {
+              setCurrentPatternId(patterns[0].id);
+            } else {
+              // Should not happen due to migration, but fallback
+              const newId = randomUUID();
+              setPatterns([{ id: newId, name: 'Pattern 1', bars: DEFAULT_PATTERN_BARS, hits: [] }]);
+              setCurrentPatternId(newId);
+            }
+            
+            await loadSamplesFromDB();
+            
+            // Show migration notice if version was updated
+            const originalVersion = rawData.version || 'unknown';
+            if (originalVersion !== CURRENT_PROJECT_VERSION) {
+              alert(`Project loaded successfully!\n\nProject was migrated from version ${originalVersion} to ${CURRENT_PROJECT_VERSION}.`);
+            } else {
+              alert("Project Loaded Successfully");
+            }
+            setIsProjectLoading(false);
+          } catch (err) {
+            console.error("Load fail", err);
+            alert(`Failed to load project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            setIsProjectLoading(false);
+          }
+        };
+        reader.onerror = () => {
+          setIsProjectLoading(false);
+          alert("Failed to read project file.");
+        };
+        reader.readAsText(file);
+        return; // Early return - onload will handle completion
+      } else {
+        throw new Error('Unknown file format. Expected ZIP or JSON project file.');
       }
-    };
-    reader.onerror = () => {
+    } catch (err) {
+      console.error("Load fail", err);
+      alert(`Failed to load project: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setIsProjectLoading(false);
-      alert("Failed to read project file.");
-    };
-    reader.readAsText(file);
+    }
   };
 
   // Drag and Drop Handlers

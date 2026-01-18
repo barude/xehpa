@@ -44,6 +44,7 @@ export interface ProjectData {
     name: string;
     base64Data?: string;
     data?: ArrayBuffer;
+    filename?: string; // For ZIP format: reference to file in samples folder
   }>;
 }
 
