@@ -86,9 +86,12 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             e.currentTarget.style.color = '#FFFFFF';
           }}
           onMouseUp={(e) => {
+            const target = e.currentTarget;
             setTimeout(() => {
-              e.currentTarget.style.backgroundColor = '#FFFFFF';
-              e.currentTarget.style.color = '#000000';
+              if (target && target.style) {
+                target.style.backgroundColor = '#FFFFFF';
+                target.style.color = '#000000';
+              }
             }, 100);
           }}
           style={{
@@ -137,9 +140,12 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
               e.currentTarget.style.color = '#FFFFFF';
             }}
             onMouseUp={(e) => {
+              const target = e.currentTarget;
               setTimeout(() => {
-                e.currentTarget.style.backgroundColor = '#FFFFFF';
-                e.currentTarget.style.color = '#000000';
+                if (target && target.style) {
+                  target.style.backgroundColor = '#FFFFFF';
+                  target.style.color = '#000000';
+                }
               }, 100);
             }}
             style={{
@@ -197,14 +203,17 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
               e.currentTarget.style.color = '#FFFFFF';
             }
           }}
-          onMouseUp={(e) => {
-            if (selectedSampleId) {
-              setTimeout(() => {
-                e.currentTarget.style.backgroundColor = '#FFFFFF';
-                e.currentTarget.style.color = '#000000';
-              }, 100);
-            }
-          }}
+            onMouseUp={(e) => {
+              if (selectedSampleId) {
+                const target = e.currentTarget;
+                setTimeout(() => {
+                  if (target && target.style) {
+                    target.style.backgroundColor = '#FFFFFF';
+                    target.style.color = '#000000';
+                  }
+                }, 100);
+              }
+            }}
           style={{
             flex: 1,
             height: '13px',

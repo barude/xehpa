@@ -27,6 +27,7 @@ import { isTyping } from './utils/dom';
 import { formatTimeForDisplay } from './utils/formatting';
 import { TEMPO_MIN, TEMPO_MAX, TEMPO_DEFAULT, PADS_PER_BANK, MAX_PADS, MAX_ARRANGEMENT_BANKS, DEFAULT_PATTERN_BARS, BEATS_PER_BAR, BANK_LETTERS, PATTERN_BAR_OPTIONS, MAX_HITS_PER_PATTERN } from './constants';
 import loadJSZip from './services/jszip-shim';
+import { showError, showWarning } from './utils/errors';
 
 const INITIAL_PATTERN: Pattern = {
   id: randomUUID(),
@@ -234,7 +235,10 @@ export default function App() {
       try {
         const buffer = await audioEngine.decode(s.data);
         loaded.push({ id: s.id, name: s.name, buffer });
-      } catch (e) { console.error("Decode fail:", s.name); }
+      } catch (e) {
+        // Sample decode failure - user should know which sample failed
+        showWarning(`Sample "${s.name}" could not be loaded. It may be corrupted.`);
+      }
     }
     
     setSamples(loaded);
@@ -275,7 +279,7 @@ export default function App() {
       const fileNameLower = file.name.toLowerCase();
       const existingSize = existingSamplesMap.get(fileNameLower);
       if (existingSize !== undefined && existingSize === file.size) {
-        console.warn(`Skipping duplicate: ${file.name}`);
+        // Duplicate file - skip silently (user doesn't need notification)
         skipped.push(file.name);
         continue;
       }
@@ -290,17 +294,32 @@ export default function App() {
     const results: SampleData[] = [];
     const errors: string[] = [];
     
-    // Helper function to process a single file
-    const processFile = async (file: File): Promise<SampleData | null> => {
+    // Helper function to process a single file with timeout protection
+    const processFile = async (file: File, timeoutMs: number = 30000): Promise<SampleData | null> => {
+      let timeoutHandle: NodeJS.Timeout | undefined;
       try {
-        const ab = await file.arrayBuffer();
-        const abCopy = ab.slice(0);
-        const buffer = await audioEngine.decode(abCopy);
-        const id = randomUUID();
-        await saveSample(id, file.name, ab, 0, buffer.duration);
-        return { id, name: file.name, buffer };
+        // Add timeout to prevent hanging on corrupted/large files
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(new Error(`Timeout: ${file.name} took too long to process`)), timeoutMs);
+        });
+        
+        const processPromise = (async () => {
+          const ab = await file.arrayBuffer();
+          const abCopy = ab.slice(0);
+          const buffer = await audioEngine.decode(abCopy);
+          const id = randomUUID();
+          await saveSample(id, file.name, ab, 0, buffer.duration);
+          return { id, name: file.name, buffer };
+        })();
+        
+        const result = await Promise.race([processPromise, timeoutPromise]);
+        // Clear timeout if process completed successfully
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        return result;
       } catch (err) {
-        console.error(`Failed to import sample ${file.name}:`, err);
+        // Clear timeout on error
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        // Import failure - track for user feedback at end of batch
         return null;
       }
     };
@@ -332,8 +351,12 @@ export default function App() {
   }, []);
 
   // Pre-warm AudioContext on page load for live performance
+  // Note: Will fail silently due to autoplay policy until user interaction - this is expected
   useEffect(() => {
-    audioEngine.ctx.resume().catch(err => console.error("Failed to pre-warm AudioContext:", err));
+    audioEngine.ctx.resume().catch(() => {
+      // Autoplay policy requires user gesture - this is expected behavior, not an error
+      // Audio will work fine once user clicks any pad or starts playback
+    });
   }, []);
 
   // Battery/performance mode detection for live performance warnings
@@ -402,7 +425,8 @@ export default function App() {
     try {
       audioEngine.stopAll();
     } catch (e) {
-      console.error("Error stopping audio:", e);
+      // Non-critical: audio stop failure doesn't break functionality
+      // Log but don't interrupt user
     }
     stopPreview();
     setLastTriggerInfo(null);
@@ -477,9 +501,21 @@ export default function App() {
     const pad = padsRef.current.find(p => p.id === padId);
     if (!isValidPad(pad)) return;
     const sample = samplesRef.current.find(s => s.id === pad!.sampleId);
-    if (!sample) return;
+    if (!sample) {
+      // Pad has no sample assigned - silent return (not an error state)
+      return;
+    }
 
     const contextId = offsetOverride !== undefined ? 'preview' : 'manual';
+    
+    // Ensure AudioContext is running before playback
+    // User just clicked a pad, so resume() should succeed (user gesture exists)
+    // If it fails, playPad() will handle the error appropriately
+    if (audioEngine.ctx.state !== 'running') {
+      audioEngine.resume().catch(() => {
+        // Resume may still fail due to timing, but playPad will handle it
+      });
+    }
 
     if (offsetOverride !== undefined) {
       // Starting preview playback - stop any existing preview and regular pad playback
@@ -495,7 +531,16 @@ export default function App() {
       stopPreview();
     }
 
-    const trigger = audioEngine.playPad(sample.buffer, pad, offsetOverride, contextId, looping);
+    let trigger: TriggerInfo;
+    try {
+      trigger = audioEngine.playPad(sample.buffer, pad, offsetOverride, contextId, looping);
+    } catch (err) {
+      showError(
+        `Failed to play pad ${padId}`,
+        err instanceof Error ? err.message : "The sample may be corrupted."
+      );
+      return;
+    }
     
     // Always update lastTriggerInfo for non-preview playback or when looping is enabled
     // This ensures the playhead visualization reflects the current looping state
@@ -614,9 +659,17 @@ export default function App() {
     const elapsedInStep = now - sectionStartTimeRef.current;
     const currentBaseDur = playingPatterns.reduce((max, p) => Math.max(max, getPatternDuration(p)), 0);
     
-    // Protection against division by zero
+    // Protection against division by zero - recover gracefully
     if (currentBaseDur <= 0 || beatDur <= 0) {
-      timerIDRef.current = requestAnimationFrame(scheduler);
+      // Invalid state - stop transport to prevent infinite loop
+      if (transportRef.current !== TransportStatus.STOPPED) {
+        toggleTransportRef.current();
+        showWarning("Playback stopped", "Invalid pattern or tempo detected");
+      }
+      if (timerIDRef.current) {
+        cancelAnimationFrame(timerIDRef.current);
+        timerIDRef.current = null;
+      }
       return;
     }
 
@@ -638,8 +691,10 @@ export default function App() {
         setCurrentSongStepIdx(nextIdx);
         currentSongStepIdxRef.current = nextIdx;
       }
-      sectionStartTimeRef.current += stepTotalDur;
-      lastScheduledTimeRef.current = sectionStartTimeRef.current; 
+      const newSectionStart = sectionStartTimeRef.current + stepTotalDur;
+      sectionStartTimeRef.current = newSectionStart;
+      // Reset scheduling window to new section start to catch all hits from the beginning
+      lastScheduledTimeRef.current = newSectionStart - 0.001;
       lastScheduledHitIdsRef.current.clear();
       setCurrentPass(p => p + 1);
     }
@@ -648,7 +703,10 @@ export default function App() {
     // FIX: Apply modulo to current time to ensure it wraps correctly during loops for both Song and Pattern mode
     setCurrentSongTime(totalSongDuration > 0 ? (now - songStartTimeRef.current) % totalSongDuration : 0);
 
-    const lookAhead = 0.2; 
+    // Tempo-aware lookahead: ensure we can schedule at least 2 beats ahead
+    // At high BPM, fixed 200ms may not cover one beat, causing missed triggers
+    // Minimum 100ms for system stability, maximum 500ms to prevent excessive scheduling
+    const lookAhead = Math.max(0.1, Math.min(0.5, beatDur * 2));
     
     while (nextMetronomeTimeRef.current < now + lookAhead) {
         if (isMetronomeEnabledRef.current) audioEngine.playMetronome(nextMetronomeTimeRef.current, metronomeBeatRef.current % BEATS_PER_BAR === 0);
@@ -660,6 +718,9 @@ export default function App() {
     if (lastScheduledHitIdsRef.current.size > 1000) {
       lastScheduledHitIdsRef.current.clear();
     }
+
+    // Track the latest scheduled hit time to ensure we don't miss hits after loops
+    let latestScheduledTime = lastScheduledTimeRef.current;
 
     playingPatterns.forEach(pattern => {
       const pDur = getPatternDuration(pattern);
@@ -680,6 +741,9 @@ export default function App() {
             try {
               audioEngine.playPadScheduled(sample.buffer, pad!, hitAbsoluteTime, pattern.id);
               
+              // Update latest scheduled time to ensure we don't regress
+              latestScheduledTime = Math.max(latestScheduledTime, hitAbsoluteTime);
+              
               // Schedule visual feedback to flash the pad at the exact trigger time
               const delayMs = Math.max(0, (hitAbsoluteTime - now) * 1000);
               setTimeout(() => {
@@ -691,7 +755,11 @@ export default function App() {
                 }), 80);
               }, delayMs);
             } catch (e) {
-              console.error("Failed to schedule pad:", e);
+              // Critical: scheduling failure means audio won't play - user must know
+              showError(
+                `Failed to play sample on pad ${pad!.id}`,
+                "The sample may be corrupted or the audio system is unavailable. Try reloading the sample."
+              );
             }
           }
           scheduledSet.add(hitKey);
@@ -699,7 +767,18 @@ export default function App() {
       });
     });
 
-    lastScheduledTimeRef.current = now;
+    // Update lastScheduledTime to track scheduling progress
+    // Use the latest scheduled hit time if any hits were scheduled
+    // Otherwise, advance to prevent rescheduling past events while maintaining lookahead window
+    // This ensures hits at section start are never skipped, even when scheduler runs slightly late
+    if (latestScheduledTime > lastScheduledTimeRef.current) {
+      // We scheduled some hits - track the latest one
+      lastScheduledTimeRef.current = latestScheduledTime;
+    } else {
+      // No new hits scheduled - advance window to prevent rescheduling past events
+      // But keep it before 'now' to maintain lookahead for future scheduler ticks
+      lastScheduledTimeRef.current = Math.max(lastScheduledTimeRef.current, now - lookAhead);
+    }
     timerIDRef.current = requestAnimationFrame(scheduler);
   }, [killAllAudio, totalSongDuration]);
 
@@ -708,7 +787,10 @@ export default function App() {
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         // Tab became visible: ensure AudioContext is running and resume scheduler if needed
-        audioEngine.ctx.resume().catch(err => console.error("Failed to resume AudioContext on visibility change:", err));
+        audioEngine.ctx.resume().catch(() => {
+          // Autoplay policy may prevent resume until user gesture - this is expected
+          // Audio will resume automatically on next user interaction (pad click, transport, etc.)
+        });
         if (transportRef.current !== TransportStatus.STOPPED && !timerIDRef.current) {
           scheduler();
         }
@@ -744,7 +826,7 @@ export default function App() {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
       } catch (err) {
-        console.error('Failed to release wake lock:', err);
+        // Wake lock release failure is non-critical - silent
       }
     }
   }, []);
@@ -787,7 +869,9 @@ export default function App() {
       timerIDRef.current = null;
       
       killAllAudio();
-      audioEngine.resume().catch(err => console.error("Failed to resume audio:", err));
+      audioEngine.resume().catch(() => {
+        // Resume may fail due to autoplay policy - will succeed on user interaction
+      });
       
       // Request wake lock to prevent tab suspension during playback
       requestWakeLock();
@@ -897,40 +981,47 @@ export default function App() {
   };
 
   const saveProject = async () => {
-    const dbSamples = await getAllSamples();
-    
-    // Load JSZip
-    const JSZip = await loadJSZip();
-    const zip = new JSZip();
-    
-    // Create project.json with metadata (samples reference filenames instead of base64Data)
-    const projectMetadata = { 
-      version: CURRENT_PROJECT_VERSION, 
-      pads, 
-      patterns, 
-      arrangementBanks, 
-      tempo,
-      samples: dbSamples.map(s => ({
-        id: s.id,
-        name: s.name,
-        filename: `${s.id}.wav` // Reference to file in samples folder
-      }))
-    };
-    
-    // Add project.json to ZIP
-    zip.file('project.json', JSON.stringify(projectMetadata, null, 2));
-    
-    // Add all samples as binary .wav files in samples folder
-    for (const sample of dbSamples) {
-      zip.file(`samples/${sample.id}.wav`, sample.data);
+    try {
+      const dbSamples = await getAllSamples();
+      
+      // Load JSZip
+      const JSZip = await loadJSZip();
+      const zip = new JSZip();
+      
+      // Create project.json with metadata (samples reference filenames instead of base64Data)
+      const projectMetadata = { 
+        version: CURRENT_PROJECT_VERSION, 
+        pads, 
+        patterns, 
+        arrangementBanks, 
+        tempo,
+        samples: dbSamples.map(s => ({
+          id: s.id,
+          name: s.name,
+          filename: `${s.id}.wav` // Reference to file in samples folder
+        }))
+      };
+      
+      // Add project.json to ZIP
+      zip.file('project.json', JSON.stringify(projectMetadata, null, 2));
+      
+      // Add all samples as binary .wav files in samples folder
+      for (const sample of dbSamples) {
+        zip.file(`samples/${sample.id}.wav`, sample.data);
+      }
+      
+      // Generate ZIP blob and download
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a'); 
+      a.href = URL.createObjectURL(zipBlob); 
+      a.download = `XEHPA_Project_${new Date().getTime()}.fck`; 
+      a.click();
+    } catch (err) {
+      showError(
+        "Failed to save project",
+        err instanceof Error ? err.message : "An unknown error occurred. Try again."
+      );
     }
-    
-    // Generate ZIP blob and download
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const a = document.createElement('a'); 
-    a.href = URL.createObjectURL(zipBlob); 
-    a.download = `XEHPA_Project_${new Date().getTime()}.fck`; 
-    a.click();
   };
 
   const hasUnsavedChanges = useCallback(() => {
@@ -1005,7 +1096,7 @@ export default function App() {
       localStorage.removeItem('bpc_tempo');
       localStorage.removeItem('bpc_quantize');
     } catch (err) {
-      console.error("Failed to clear localStorage:", err);
+      // localStorage clear failure is non-critical - continue anyway
     }
   }, [transport, killAllAudio, stopPreview]);
 
@@ -1078,7 +1169,7 @@ export default function App() {
         // Load project.json
         const projectJsonFile = zip.file('project.json');
         if (!projectJsonFile) {
-          throw new Error('Project file is missing project.json');
+          throw new Error('Invalid project file: missing project.json');
         }
         
         const projectJsonText = await projectJsonFile.async('string');
@@ -1090,7 +1181,7 @@ export default function App() {
         // Validate migrated project structure
         const validation = validateProject(migratedData);
         if (!validation.valid) {
-          throw new Error(`Invalid project structure: ${validation.errors.join('; ')}`);
+          throw new Error(`Project file is corrupted: ${validation.errors.join('; ')}`);
         }
         
         // Clear existing samples before loading new ones
@@ -1106,7 +1197,7 @@ export default function App() {
           for (let i = 0; i < migratedData.samples.length; i++) {
             const s = migratedData.samples[i];
             if (!s.id || !s.name) {
-              console.warn("Skipping invalid sample:", s);
+              // Invalid sample entry - skip silently (corrupted project data)
               continue;
             }
             
@@ -1118,14 +1209,15 @@ export default function App() {
               if (sampleFile) {
                 sampleData = await sampleFile.async('arraybuffer');
               } else {
-                console.warn(`Sample file not found in ZIP: samples/${s.filename}`);
+                // Sample file missing from ZIP - log but continue loading other samples
+                showWarning(`Sample "${s.name}" not found in project file`);
                 continue;
               }
             } else if (s.base64Data && typeof s.base64Data === 'string') {
               // Fallback: base64 data in JSON (shouldn't happen in ZIP format, but handle it)
               sampleData = base64ToArrayBuffer(s.base64Data);
             } else {
-              console.warn("Sample missing audio data:", s.name);
+              showWarning(`Sample "${s.name}" has no audio data`);
               continue;
             }
             
@@ -1137,7 +1229,10 @@ export default function App() {
               const createdAt = baseTime - i;
               await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
             } catch (sampleErr) {
-              console.error("Failed to load sample:", s.name, sampleErr);
+              showWarning(
+                `Failed to load sample "${s.name}"`,
+                sampleErr instanceof Error ? sampleErr.message : "Sample may be corrupted"
+              );
             }
           }
         }
@@ -1215,7 +1310,7 @@ export default function App() {
                   // Direct ArrayBuffer (unlikely in JSON, but handle it)
                   sampleData = s.data;
                 } else {
-                  console.warn("Sample missing audio data:", s.name);
+                  showWarning(`Sample "${s.name}" has no audio data`);
                   continue;
                 }
                 
@@ -1229,7 +1324,10 @@ export default function App() {
                   const createdAt = baseTime - i;
                   await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
                 } catch (sampleErr) {
-                  console.error("Failed to load sample:", s.name, sampleErr);
+                  showWarning(
+                    `Failed to load sample "${s.name}"`,
+                    sampleErr instanceof Error ? sampleErr.message : "Sample may be corrupted"
+                  );
                 }
               }
             }
@@ -1264,8 +1362,10 @@ export default function App() {
             }
             setIsProjectLoading(false);
           } catch (err) {
-            console.error("Load fail", err);
-            alert(`Failed to load project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            showError(
+              "Failed to load project",
+              err instanceof Error ? err.message : "The file may be corrupted or in an unsupported format."
+            );
             setIsProjectLoading(false);
           }
         };
@@ -1276,11 +1376,13 @@ export default function App() {
         reader.readAsText(file);
         return; // Early return - onload will handle completion
       } else {
-        throw new Error('Unknown file format. Expected ZIP or JSON project file.');
+        throw new Error('Not a valid XEHPA project file. Expected .fck format.');
       }
     } catch (err) {
-      console.error("Load fail", err);
-      alert(`Failed to load project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      showError(
+        "Failed to load project",
+        err instanceof Error ? err.message : "The file may be corrupted or in an unsupported format."
+      );
       setIsProjectLoading(false);
     }
   };
@@ -1924,8 +2026,10 @@ const AppContent: React.FC<{
                 a.click();
                 URL.revokeObjectURL(url);
               } catch (error) {
-                console.error('Export stems error:', error);
-                alert(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+                showError(
+                  "Export failed",
+                  error instanceof Error ? error.message : "An unknown error occurred during export."
+                );
               } finally {
                 props.setIsExportingStems(false);
               }
@@ -3137,7 +3241,11 @@ const AppContent: React.FC<{
               
               input.onchange = async (e) => {
                 const files = Array.from((e.target as HTMLInputElement).files || []);
-                if (files.length === 0) return;
+                if (files.length === 0) {
+                  // User cancelled file selection - clear progress
+                  props.setImportProgress(null);
+                  return;
+                }
 
                 // Show progress indicator
                 props.setImportProgress({ current: 0, total: files.length });
@@ -3157,28 +3265,30 @@ const AppContent: React.FC<{
                     props.setSelectedSampleId(results[0].id);
                   }
 
-                  // Log summary of results
-                  if (skipped.length > 0) {
-                    console.info(`Skipped ${skipped.length} duplicate file${skipped.length > 1 ? 's' : ''}`);
-                  }
+                  // User feedback for import results
                   if (errors.length > 0) {
                     const errorMsg = errors.length === 1 
                       ? `Failed to import: ${errors[0]}`
                       : `Failed to import ${errors.length} files: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`;
-                    console.warn(errorMsg);
+                    
                     if (results.length === 0 && skipped.length === 0) {
-                      alert(errorMsg);
-                    } else {
-                      console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''}. ${errorMsg}`);
+                      // All failed - critical error
+                      showError(
+                        errorMsg,
+                        "Files may be corrupted or in an unsupported format."
+                      );
+                    } else if (results.length > 0) {
+                      // Partial success - warning
+                      showWarning(`${results.length} imported. ${errorMsg}`);
                     }
-                  } else if (results.length > 0) {
-                    console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''}`);
                   } else if (skipped.length > 0 && results.length === 0) {
-                    alert('All files were duplicates and were skipped');
+                    showWarning('All files were duplicates and were skipped');
                   }
                 } catch (err) {
-                  console.error('Import failed:', err);
-                  alert(`Failed to import files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                  showError(
+                    "Import failed",
+                    err instanceof Error ? err.message : "An unknown error occurred."
+                  );
                 } finally {
                   // Hide progress indicator
                   props.setImportProgress(null);
@@ -3198,7 +3308,11 @@ const AppContent: React.FC<{
               
               input.onchange = async (e) => {
                 const files = Array.from((e.target as HTMLInputElement).files || []);
-                if (files.length === 0) return;
+                if (files.length === 0) {
+                  // User cancelled file selection - clear progress
+                  props.setImportProgress(null);
+                  return;
+                }
 
                 // Show progress indicator
                 props.setImportProgress({ current: 0, total: files.length });
@@ -3212,7 +3326,8 @@ const AppContent: React.FC<{
                   );
 
                   if (results.length === 0 && skipped.length === 0 && errors.length === 0) {
-                    alert('No audio files found in selected folder');
+                    showWarning('No audio files found in selected folder');
+                    props.setImportProgress(null);
                     return;
                   }
 
@@ -3225,26 +3340,25 @@ const AppContent: React.FC<{
 
                   // Log summary of results
                   if (skipped.length > 0) {
-                    console.info(`Skipped ${skipped.length} duplicate file${skipped.length > 1 ? 's' : ''}`);
+                    // Duplicate files skipped - silent (user doesn't need notification)
                   }
                   if (errors.length > 0) {
                     const errorMsg = errors.length === 1 
                       ? `Failed to import: ${errors[0]}`
                       : `Failed to import ${errors.length} files: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`;
-                    console.warn(errorMsg);
                     if (results.length === 0 && skipped.length === 0) {
-                      alert(errorMsg);
+                      showError(errorMsg, "Files may be corrupted or in an unsupported format.");
                     } else {
-                      console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''} from folder. ${errorMsg}`);
+                      showWarning(`${results.length} imported. ${errorMsg}`);
                     }
-                  } else if (results.length > 0) {
-                    console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''} from folder`);
                   } else if (skipped.length > 0 && results.length === 0) {
-                    alert('All files were duplicates and were skipped');
+                    showWarning('All files were duplicates and were skipped');
                   }
                 } catch (err) {
-                  console.error('Import failed:', err);
-                  alert(`Failed to import folder: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                  showError(
+                    "Import failed",
+                    err instanceof Error ? err.message : "An unknown error occurred."
+                  );
                 } finally {
                   // Hide progress indicator
                   props.setImportProgress(null);

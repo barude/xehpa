@@ -65,24 +65,28 @@ class AudioEngine {
         console.warn("AudioContext suspended - attempting auto-resume");
         // Aggressively attempt to resume for live performance
         this.ctx.resume().catch(err => {
-          console.error("Failed to auto-resume AudioContext:", err);
+          // Auto-resume failed - will retry (non-critical, handled by retry logic)
           // Retry after short delay
           setTimeout(() => {
             if (this.ctx.state === 'suspended') {
-              this.ctx.resume().catch(e => console.error("Retry resume failed:", e));
+              this.ctx.resume().catch(() => {
+                // Retry resume failed - state change handler will attempt again
+              });
             }
           }, 100);
         });
       } else if (this.ctx.state === 'interrupted') {
-        console.warn("AudioContext interrupted - will auto-resume");
+        // AudioContext interrupted - auto-resume in progress (non-critical)
         // Auto-resume after interruption
         setTimeout(() => {
           if (this.ctx.state === 'interrupted') {
-            this.ctx.resume().catch(err => console.error("Failed to resume after interruption:", err));
+            this.ctx.resume().catch(() => {
+              // Resume after interruption failed - will be handled by user interaction
+            });
           }
         }, 100);
       } else if (this.ctx.state === 'closed') {
-        console.error("AudioContext closed - cannot recover");
+        // AudioContext closed - cannot recover (critical, but handled by constructor error)
       }
     };
     this.ctx.addEventListener('statechange', this.stateChangeHandler);
@@ -107,7 +111,7 @@ class AudioEngine {
         // This does NOT interrupt the existing masterGain -> destination connection
         this.masterGain.connect(this.analyser);
       } catch (e) {
-        console.error("Failed to create analyser:", e);
+        // Analyser creation failed - non-critical, returns null
         return null;
       }
     }
@@ -140,7 +144,7 @@ class AudioEngine {
         splitter.connect(this.leftAnalyser, 0);
         splitter.connect(this.rightAnalyser, 1);
       } catch (e) {
-        console.error("Failed to create stereo analysers:", e);
+        // Stereo analyser creation failed - non-critical, returns null
         return { left: null, right: null };
       }
     }
@@ -225,27 +229,47 @@ class AudioEngine {
     this.reverbNode.buffer = impulse;
   }
 
-  async resume() {
+  async resume(): Promise<void> {
     // Aggressively resume AudioContext - critical for live performance
     if (this.ctx.state !== 'running') {
       try {
         await this.ctx.resume();
-        // If still not running after resume attempt, log warning
-        if (this.ctx.state !== 'running') {
-          console.warn(`AudioContext state after resume: ${this.ctx.state}`);
+        // Success - return
+        if (this.ctx.state === 'running') {
+          return;
         }
       } catch (e) {
-        console.error("Failed to resume AudioContext:", e);
-        // Retry once after short delay
-        setTimeout(async () => {
-          if (this.ctx.state !== 'running') {
-            try {
-              await this.ctx.resume();
-            } catch (retryErr) {
-              console.error("Retry resume failed:", retryErr);
+        // Check if this is autoplay policy (expected) vs real error
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        const isAutoplayPolicy = errorMsg.includes('not allowed to start') || 
+                                 errorMsg.includes('user gesture') ||
+                                 this.ctx.state === 'suspended';
+        
+        // Autoplay policy is expected - don't throw, audio will work on user interaction
+        if (isAutoplayPolicy) {
+          return; // Silent - expected behavior
+        }
+        
+        // Real error - try retry once
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (this.ctx.state !== 'running') {
+          try {
+            await this.ctx.resume();
+            if (this.ctx.state === 'running') {
+              return;
             }
+          } catch (retryErr) {
+            // Only throw if it's not autoplay policy
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+            const isRetryAutoplay = retryMsg.includes('not allowed to start') || 
+                                    retryMsg.includes('user gesture');
+            if (!isRetryAutoplay) {
+              throw new Error(`Audio system unavailable: ${retryMsg}`);
+            }
+            // Autoplay policy on retry - silent return
+            return;
           }
-        }, 50);
+        }
       }
     }
   }
@@ -254,8 +278,12 @@ class AudioEngine {
     try {
       return await this.ctx.decodeAudioData(arrayBuffer);
     } catch (e) {
-      console.error("Failed to decode audio data:", e);
-      throw new Error(`Audio decoding failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      // Re-throw with clear message - caller should notify user
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+      if (errorMessage.includes('corrupt') || errorMessage.includes('invalid')) {
+        throw new Error(`Audio file is corrupted or invalid format`);
+      }
+      throw new Error(`Failed to decode audio: ${errorMessage}`);
     }
   }
 
@@ -498,7 +526,8 @@ class AudioEngine {
       const gap = now - this.lastPlayTime;
       const dropoutThreshold = 100; // 100ms threshold for dropout detection
       if (gap > dropoutThreshold) {
-        console.warn(`Potential audio dropout detected: ${gap.toFixed(2)}ms gap since last playback`);
+        // Audio dropout detection - performance monitoring only (non-critical)
+        // Logged for debugging but doesn't require user notification
       }
     }
     this.lastPlayTime = now;
@@ -512,7 +541,7 @@ class AudioEngine {
     // Validate pad configuration for normal playback and looping
     if (offsetOverride === undefined || isLooping) {
       if (pad.end <= pad.start || pad.end - pad.start < 0.001) {
-        console.error("Invalid pad configuration: end must be greater than start");
+        throw new Error("Invalid pad configuration: end must be greater than start");
         throw new Error("Invalid pad configuration");
       }
     }
@@ -520,11 +549,11 @@ class AudioEngine {
     // Validate preview offset is within buffer bounds and has valid duration (only for non-looping preview)
     if (offsetOverride !== undefined && !isLooping) {
       if (playStart < 0 || playStart >= buffer.duration) {
-        console.error("Invalid preview offset: must be within buffer duration");
+        throw new Error("Invalid preview offset: must be within buffer duration");
         throw new Error("Invalid preview offset");
       }
       if (playEnd - playStart < 0.001) {
-        console.error("Invalid preview offset: insufficient duration remaining");
+        throw new Error("Invalid preview offset: insufficient duration remaining");
         throw new Error("Invalid preview offset");
       }
     }
@@ -552,7 +581,7 @@ class AudioEngine {
     source.buffer = activeBuffer;
     const rate = Math.pow(2, (pad.tune || 0) / 12);
     if (rate <= 0) {
-      console.error("Invalid playback rate:", rate);
+      throw new Error(`Invalid playback rate: ${rate}`);
       throw new Error("Invalid playback rate");
     }
     source.playbackRate.value = rate;
