@@ -1524,9 +1524,51 @@ const AppContent: React.FC<{
       <Dividers />
       
       {props.isProjectLoading && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black" style={{ position: 'fixed' }}>
-          <div className="w-32 h-0.5 bg-[#ff6600] animate-pulse mb-4" />
-          <p className="text-[#ff6600] text-[8px] uppercase tracking-[0.3em]">SYSTEM RESTORE</p>
+        <div 
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 1000,
+            backgroundColor: '#000000',
+            border: '2px solid #FFFFFF',
+            padding: '20px 30px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '12px'
+          }}
+        >
+          <p 
+            style={{
+              fontFamily: 'Barlow Condensed',
+              fontSize: '12px',
+              fontWeight: 500,
+              color: '#FFFFFF',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              margin: 0
+            }}
+          >
+            LOADING PROJECT...
+          </p>
+          <div 
+            style={{
+              width: '200px',
+              height: '2px',
+              backgroundColor: '#27272a',
+              overflow: 'hidden'
+            }}
+          >
+            <div 
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor: '#FFFFFF'
+              }}
+            />
+          </div>
         </div>
       )}
       
