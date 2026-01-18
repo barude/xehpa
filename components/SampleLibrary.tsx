@@ -6,6 +6,7 @@ import { useHint } from './HintDisplay';
 interface SampleLibraryProps {
   samples: SampleData[];
   onLoadSample: () => void;
+  onLoadFolder?: () => void;
   onSampleSelect: (sampleId: string | null) => void;
   selectedSampleId: string | null;
   onSamplesChange: (samples: SampleData[]) => void;
@@ -14,6 +15,7 @@ interface SampleLibraryProps {
 const SampleLibrary: React.FC<SampleLibraryProps> = ({
   samples,
   onLoadSample,
+  onLoadFolder,
   onSampleSelect,
   selectedSampleId,
   onSamplesChange
@@ -70,7 +72,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
         <button
           onClick={onLoadSample}
           onMouseEnter={(e) => {
-            setHint('LOAD SAMPLE · BROWSE FILES');
+            setHint('LOAD SAMPLE · MULTIPLE FILES');
             e.currentTarget.style.backgroundColor = '#000000';
             e.currentTarget.style.color = '#FFFFFF';
           }}
@@ -116,6 +118,58 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
         >
           LOAD SAMPLE
         </button>
+        {/* LOAD FOLDER Button */}
+        {onLoadFolder && (
+          <button
+            onClick={onLoadFolder}
+            onMouseEnter={(e) => {
+              setHint('LOAD FOLDER · IMPORT DIRECTORY');
+              e.currentTarget.style.backgroundColor = '#000000';
+              e.currentTarget.style.color = '#FFFFFF';
+            }}
+            onMouseLeave={(e) => {
+              setHint(null);
+              e.currentTarget.style.backgroundColor = '#FFFFFF';
+              e.currentTarget.style.color = '#000000';
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.backgroundColor = '#000000';
+              e.currentTarget.style.color = '#FFFFFF';
+            }}
+            onMouseUp={(e) => {
+              setTimeout(() => {
+                e.currentTarget.style.backgroundColor = '#FFFFFF';
+                e.currentTarget.style.color = '#000000';
+              }, 100);
+            }}
+            style={{
+              flex: 1,
+              height: '13px',
+              fontFamily: 'Barlow Condensed',
+              fontStyle: 'normal',
+              fontWeight: 500,
+              fontSize: '10px',
+              lineHeight: '12px',
+              color: '#000000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#FFFFFF',
+              cursor: 'pointer',
+              padding: 0,
+              margin: 0,
+              border: 'none',
+              borderRight: '2px solid #000000',
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              boxSizing: 'border-box'
+            }}
+          >
+            LOAD FOLDER
+          </button>
+        )}
         {/* DELETE Button */}
         <button
           onClick={(e) => {

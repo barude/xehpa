@@ -42,6 +42,7 @@ export default function App() {
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
   const [isExportingStems, setIsExportingStems] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
   
   // Initialize patterns first to ensure we have at least one
   const [patterns, setPatterns] = useState<Pattern[]>(() => {
@@ -239,6 +240,95 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadSamplesFromDB(); }, [loadSamplesFromDB]);
+
+  // Optimized batch import handler with duplicate detection, progress tracking, and parallel processing
+  const processBatchImport = useCallback(async (
+    files: File[],
+    existingSamples: SampleData[],
+    onProgress: (current: number, total: number) => void
+  ): Promise<{ results: SampleData[]; errors: string[]; skipped: string[] }> => {
+    const CONCURRENCY_LIMIT = 4;
+    const audioExtensions = ['.wav', '.mp3', '.ogg', '.aac', '.m4a', '.flac', '.webm', '.opus'];
+    
+    // Filter to only audio files and check for duplicates
+    const audioFiles: File[] = [];
+    const skipped: string[] = [];
+    
+    // Build a map of existing sample names and sizes for duplicate detection
+    // Get stored samples from IndexedDB once for size checking
+    const stored = await getAllSamples();
+    const existingSamplesMap = new Map<string, number>(); // name -> size
+    for (const storedSample of stored) {
+      existingSamplesMap.set(storedSample.name.toLowerCase(), storedSample.data.byteLength);
+    }
+    
+    for (const file of files) {
+      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+      const isAudioFile = file.type.startsWith('audio/') || audioExtensions.includes(fileExt);
+      
+      if (!isAudioFile) {
+        continue; // Skip non-audio files silently
+      }
+      
+      // Check for duplicates by name and size
+      const fileNameLower = file.name.toLowerCase();
+      const existingSize = existingSamplesMap.get(fileNameLower);
+      if (existingSize !== undefined && existingSize === file.size) {
+        console.warn(`Skipping duplicate: ${file.name}`);
+        skipped.push(file.name);
+        continue;
+      }
+      
+      audioFiles.push(file);
+    }
+    
+    if (audioFiles.length === 0) {
+      return { results: [], errors: [], skipped };
+    }
+    
+    const results: SampleData[] = [];
+    const errors: string[] = [];
+    
+    // Helper function to process a single file
+    const processFile = async (file: File): Promise<SampleData | null> => {
+      try {
+        const ab = await file.arrayBuffer();
+        const abCopy = ab.slice(0);
+        const buffer = await audioEngine.decode(abCopy);
+        const id = randomUUID();
+        await saveSample(id, file.name, ab, 0, buffer.duration);
+        return { id, name: file.name, buffer };
+      } catch (err) {
+        console.error(`Failed to import sample ${file.name}:`, err);
+        return null;
+      }
+    };
+    
+    // Process files in batches with concurrency limit
+    for (let i = 0; i < audioFiles.length; i += CONCURRENCY_LIMIT) {
+      const batch = audioFiles.slice(i, i + CONCURRENCY_LIMIT);
+      
+      // Process batch in parallel with Promise.allSettled
+      const batchPromises = batch.map(file => processFile(file));
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      // Collect results and errors from batch
+      for (let j = 0; j < batchResults.length; j++) {
+        const result = batchResults[j];
+        if (result.status === 'fulfilled' && result.value) {
+          results.push(result.value);
+        } else {
+          errors.push(batch[j].name);
+        }
+      }
+      
+      // Update progress after each batch
+      const processedCount = Math.min(i + CONCURRENCY_LIMIT, audioFiles.length);
+      onProgress(processedCount, audioFiles.length);
+    }
+    
+    return { results, errors, skipped };
+  }, []);
 
   // Pre-warm AudioContext on page load for live performance
   useEffect(() => {
@@ -1328,6 +1418,9 @@ export default function App() {
         editingPatternId={editingPatternId}
         setEditingPatternId={setEditingPatternId}
         waveformViewStateRef={waveformViewStateRef}
+        importProgress={importProgress}
+        setImportProgress={setImportProgress}
+        processBatchImport={processBatchImport}
       />
     </HintProvider>
   );
@@ -1414,6 +1507,9 @@ const AppContent: React.FC<{
   editingPatternId: string | null;
   setEditingPatternId: (id: string | null) => void;
   waveformViewStateRef: React.MutableRefObject<Map<number, { zoom: number; scrollOffset: number; focusMode: 'start' | 'end' }>>;
+  importProgress: { current: number; total: number } | null;
+  setImportProgress: (progress: { current: number; total: number } | null) => void;
+  processBatchImport: (files: File[], existingSamples: SampleData[], onProgress: (current: number, total: number) => void) => Promise<{ results: SampleData[]; errors: string[]; skipped: string[] }>;
 }> = (props) => {
   const { setHint } = useHint();
 
@@ -1431,6 +1527,57 @@ const AppContent: React.FC<{
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black" style={{ position: 'fixed' }}>
           <div className="w-32 h-0.5 bg-[#ff6600] animate-pulse mb-4" />
           <p className="text-[#ff6600] text-[8px] uppercase tracking-[0.3em]">SYSTEM RESTORE</p>
+        </div>
+      )}
+      
+      {/* Import Progress Indicator */}
+      {props.importProgress && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 1000,
+            backgroundColor: '#000000',
+            border: '2px solid #FFFFFF',
+            padding: '20px 30px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '12px'
+          }}
+        >
+          <p 
+            style={{
+              fontFamily: 'Barlow Condensed',
+              fontSize: '12px',
+              fontWeight: 500,
+              color: '#FFFFFF',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              margin: 0
+            }}
+          >
+            PROCESSING {props.importProgress.current} OF {props.importProgress.total} FILES...
+          </p>
+          <div 
+            style={{
+              width: '200px',
+              height: '2px',
+              backgroundColor: '#27272a',
+              overflow: 'hidden'
+            }}
+          >
+            <div 
+              style={{
+                width: `${(props.importProgress.current / props.importProgress.total) * 100}%`,
+                height: '100%',
+                backgroundColor: '#FFFFFF',
+                transition: 'width 0.2s ease-out'
+              }}
+            />
+          </div>
         </div>
       )}
       
@@ -2790,27 +2937,129 @@ const AppContent: React.FC<{
         <div style={{ position: 'absolute', top: '594px', left: '40px' }}>
           <SampleLibrary
             samples={props.samples}
-            onLoadSample={() => {
+            onLoadSample={async () => {
+              // Create file input with multiple file support
               const input = document.createElement('input');
               input.type = 'file';
               input.accept = 'audio/*';
+              input.multiple = true;
+              
               input.onchange = async (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (!file) return;
+                const files = Array.from((e.target as HTMLInputElement).files || []);
+                if (files.length === 0) return;
+
+                // Show progress indicator
+                props.setImportProgress({ current: 0, total: files.length });
+
                 try {
-                  const ab = await file.arrayBuffer();
-                  const abCopy = ab.slice(0);
-                  const buffer = await audioEngine.decode(abCopy);
-                  const id = randomUUID();
-                  await saveSample(id, file.name, ab, 0, buffer.duration);
-                  // Prepend new sample so it appears at the top (newest first)
-                  props.setSamples(prev => [{ id, name: file.name, buffer }, ...prev]);
-                  props.setSelectedSampleId(id);
+                  // Use optimized batch import handler
+                  const { results, errors, skipped } = await props.processBatchImport(
+                    files,
+                    props.samples,
+                    (current, total) => props.setImportProgress({ current, total })
+                  );
+
+                  // Update samples list (prepend new samples so they appear at top)
+                  if (results.length > 0) {
+                    props.setSamples(prev => [...results, ...prev]);
+                    // Select the first successfully loaded sample
+                    props.setSelectedSampleId(results[0].id);
+                  }
+
+                  // Log summary of results
+                  if (skipped.length > 0) {
+                    console.info(`Skipped ${skipped.length} duplicate file${skipped.length > 1 ? 's' : ''}`);
+                  }
+                  if (errors.length > 0) {
+                    const errorMsg = errors.length === 1 
+                      ? `Failed to import: ${errors[0]}`
+                      : `Failed to import ${errors.length} files: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`;
+                    console.warn(errorMsg);
+                    if (results.length === 0 && skipped.length === 0) {
+                      alert(errorMsg);
+                    } else {
+                      console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''}. ${errorMsg}`);
+                    }
+                  } else if (results.length > 0) {
+                    console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''}`);
+                  } else if (skipped.length > 0 && results.length === 0) {
+                    alert('All files were duplicates and were skipped');
+                  }
                 } catch (err) {
-                  console.error("Failed to import sample:", err);
-                  alert(`Failed to import sample: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                  console.error('Import failed:', err);
+                  alert(`Failed to import files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                } finally {
+                  // Hide progress indicator
+                  props.setImportProgress(null);
                 }
               };
+              
+              input.click();
+            }}
+            onLoadFolder={async () => {
+              // Create file input with folder/directory selection support
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'audio/*';
+              // Enable folder selection (webkitdirectory)
+              (input as any).webkitdirectory = true;
+              // Note: multiple is automatically true when webkitdirectory is enabled
+              
+              input.onchange = async (e) => {
+                const files = Array.from((e.target as HTMLInputElement).files || []);
+                if (files.length === 0) return;
+
+                // Show progress indicator
+                props.setImportProgress({ current: 0, total: files.length });
+
+                try {
+                  // Use optimized batch import handler
+                  const { results, errors, skipped } = await props.processBatchImport(
+                    files,
+                    props.samples,
+                    (current, total) => props.setImportProgress({ current, total })
+                  );
+
+                  if (results.length === 0 && skipped.length === 0 && errors.length === 0) {
+                    alert('No audio files found in selected folder');
+                    return;
+                  }
+
+                  // Update samples list (prepend new samples so they appear at top)
+                  if (results.length > 0) {
+                    props.setSamples(prev => [...results, ...prev]);
+                    // Select the first successfully loaded sample
+                    props.setSelectedSampleId(results[0].id);
+                  }
+
+                  // Log summary of results
+                  if (skipped.length > 0) {
+                    console.info(`Skipped ${skipped.length} duplicate file${skipped.length > 1 ? 's' : ''}`);
+                  }
+                  if (errors.length > 0) {
+                    const errorMsg = errors.length === 1 
+                      ? `Failed to import: ${errors[0]}`
+                      : `Failed to import ${errors.length} files: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`;
+                    console.warn(errorMsg);
+                    if (results.length === 0 && skipped.length === 0) {
+                      alert(errorMsg);
+                    } else {
+                      console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''} from folder. ${errorMsg}`);
+                    }
+                  } else if (results.length > 0) {
+                    console.info(`Successfully imported ${results.length} sample${results.length > 1 ? 's' : ''} from folder`);
+                  } else if (skipped.length > 0 && results.length === 0) {
+                    alert('All files were duplicates and were skipped');
+                  }
+                } catch (err) {
+                  console.error('Import failed:', err);
+                  alert(`Failed to import folder: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                } finally {
+                  // Hide progress indicator
+                  props.setImportProgress(null);
+                }
+              };
+              
               input.click();
             }}
             onSampleSelect={(sampleId) => {
