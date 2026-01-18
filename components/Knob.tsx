@@ -43,8 +43,9 @@ const Knob: React.FC<KnobProps> = ({
 }) => {
   const knobRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
-  const dragStartY = useRef(0);
   const dragStartValue = useRef(0);
+  const accumulatedDelta = useRef(0);
+  const lastClientY = useRef<number | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const [isActive, setIsActive] = useState(false);
   
@@ -72,12 +73,25 @@ const Knob: React.FC<KnobProps> = ({
   );
 
   const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+    async (e: React.MouseEvent) => {
       e.preventDefault();
       isDragging.current = true;
       setIsActive(true);
-      dragStartY.current = e.clientY;
       dragStartValue.current = value;
+      accumulatedDelta.current = 0;
+      lastClientY.current = e.clientY;
+      
+      // Request pointer lock for infinite drag behavior
+      const element = knobRef.current;
+      if (element) {
+        try {
+          await element.requestPointerLock();
+        } catch (err) {
+          // Pointer lock may fail in some browsers or contexts
+          console.warn('Pointer lock failed:', err);
+        }
+      }
+      
       document.body.style.cursor = 'ns-resize';
     },
     [value]
@@ -91,19 +105,37 @@ const Knob: React.FC<KnobProps> = ({
       e.preventDefault();
       e.stopPropagation();
       
-      const deltaY = dragStartY.current - e.clientY;
+      // Use movementY for relative movement (works with pointer lock)
+      // Fall back to clientY delta if pointer lock is not available
+      let deltaY: number;
+      if (e.movementY !== undefined && document.pointerLockElement) {
+        // Pointer lock is active - use relative movement
+        deltaY = -e.movementY;
+      } else {
+        // Fallback: calculate delta from clientY position
+        if (lastClientY.current !== null) {
+          deltaY = lastClientY.current - e.clientY;
+          lastClientY.current = e.clientY;
+        } else {
+          deltaY = 0;
+          lastClientY.current = e.clientY;
+        }
+      }
+      
+      // Accumulate delta for smooth continuous adjustment
+      accumulatedDelta.current += deltaY;
+      
       const range = max - min;
       const sensitivity = range / 200;
-      const newValue = clampValue(dragStartValue.current + deltaY * sensitivity);
+      const newValue = clampValue(dragStartValue.current + accumulatedDelta.current * sensitivity);
       
-      if (Math.abs(newValue - dragStartValue.current) > step / 2) {
-        dragStartValue.current = newValue;
-        dragStartY.current = e.clientY;
+      // Update value if it has changed significantly
+      if (Math.abs(newValue - value) >= step / 2) {
         onChange(newValue);
         onHover?.(true, newValue);
       }
     },
-    [max, min, step, clampValue, onChange, onHover]
+    [max, min, step, clampValue, onChange, onHover, value]
   );
 
   const handleMouseUp = useCallback(
@@ -116,6 +148,13 @@ const Knob: React.FC<KnobProps> = ({
       
       isDragging.current = false;
       setIsActive(false);
+      lastClientY.current = null;
+      
+      // Exit pointer lock
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+      
       document.body.style.cursor = '';
       // Clear hover state when dragging stops
       onHover?.(false, null);
@@ -178,11 +217,27 @@ const Knob: React.FC<KnobProps> = ({
     const options = { capture: true, passive: false };
     document.addEventListener('mousemove', handleMouseMove, options);
     document.addEventListener('mouseup', handleMouseUp, options);
+    
+    // Handle pointer lock change events
+    const handlePointerLockChange = () => {
+      // If pointer lock was released (e.g., ESC key), stop dragging
+      if (!document.pointerLockElement && isDragging.current) {
+        isDragging.current = false;
+        setIsActive(false);
+        lastClientY.current = null;
+        document.body.style.cursor = '';
+        onHover?.(false, null);
+      }
+    };
+    
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
+    
     return () => {
       document.removeEventListener('mousemove', handleMouseMove, options);
       document.removeEventListener('mouseup', handleMouseUp, options);
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [handleMouseMove, handleMouseUp]);
+  }, [handleMouseMove, handleMouseUp, onHover]);
 
   const center = diameter / 2;
   

@@ -68,8 +68,8 @@ const KNOB_CONFIG = {
   // Filter toggle (30px diameter, radius 15)
   filterType: { cx: 244, cy: 126 },  // SVG: cx=644.004, cy=661.004
   
-  // Segment display (41x14)
-  display: { x: 224, y: 232 },  // SVG: x=624, y=767
+  // Segment display (50x17)
+  display: { x: 219, y: 229 },  // Centered horizontally in 488px panel: (488-50)/2 = 219px
 };
 
 const SIZES = {

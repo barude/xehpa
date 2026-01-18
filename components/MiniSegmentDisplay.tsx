@@ -5,8 +5,8 @@ interface MiniSegmentDisplayProps {
 }
 
 const MiniSegmentCell: React.FC<{ char: string }> = ({ char }) => {
-  const width = 8;
-  const height = 12;
+  const width = 10;
+  const height = 15;
   
   const getActiveSegments = (c: string) => {
     if (c === ':') return [18, 19];
@@ -35,7 +35,7 @@ const MiniSegmentCell: React.FC<{ char: string }> = ({ char }) => {
       if (c === 'I' || c === 'i') return [1, 2];
       if (c === 'G' || c === 'g') return [0, 2, 3, 4, 5, 6];
       if (c === 'A' || c === 'a') return [0, 1, 2, 4, 5, 6];
-      if (c === 'N' || c === 'n') return [5, 6, 1, 2, 4];
+      if (c === 'N' || c === 'n') return [0, 1, 2, 4, 5];
       if (c === 'D' || c === 'd') return [1, 2, 3, 4, 6];
       return [];
     }
@@ -82,7 +82,7 @@ const MiniSegmentDisplay: React.FC<MiniSegmentDisplayProps> = ({ value }) => {
   }
   
   return (
-    <div className="flex items-center justify-center" style={{ width: '41px', height: '14px' }}>
+    <div className="flex items-center justify-center" style={{ width: '50px', height: '17px' }}>
       {processedValue.split('').map((char, i) => (
         <MiniSegmentCell key={i} char={char} />
       ))}

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { SampleData } from '../types';
 import { TriggerInfo, audioEngine } from '../services/audioEngine';
 import { useHint } from './HintDisplay';
@@ -17,6 +17,13 @@ interface WaveformEditorProps {
   playMode?: 'MONO' | 'POLY';
   onToggleReverse?: () => void;
   onTogglePlayMode?: () => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+  scrollOffset: number;
+  onScrollOffsetChange: (scrollOffset: number) => void;
+  focusMode: 'start' | 'end';
+  onFocusModeChange: (focusMode: 'start' | 'end') => void;
+  waveformViewStateRef?: React.MutableRefObject<Map<number, { zoom: number; scrollOffset: number; focusMode: 'start' | 'end' }>>;
 }
 
 const WaveformEditor: React.FC<WaveformEditorProps> = ({ 
@@ -32,7 +39,14 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   isReversed = false,
   playMode = 'MONO',
   onToggleReverse,
-  onTogglePlayMode
+  onTogglePlayMode,
+  zoom,
+  onZoomChange,
+  scrollOffset,
+  onScrollOffsetChange,
+  focusMode,
+  onFocusModeChange,
+  waveformViewStateRef
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,10 +57,67 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   const isPreviewingRef = useRef<boolean>(false);
   const lastLoopStartRef = useRef<number>(0);
   const lastLoopEndRef = useRef<number>(0);
+  const previousPadIdRef = useRef<number | undefined>(padId);
   
-  const [zoom, setZoom] = useState(1);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const [focusMode, setFocusMode] = useState<'start' | 'end'>('start');
+  // Use local state for fast, immediate updates (no parent re-render)
+  const [localZoom, setLocalZoom] = useState(zoom);
+  const [localScrollOffset, setLocalScrollOffset] = useState(scrollOffset);
+  const [localFocusMode, setLocalFocusMode] = useState<'start' | 'end'>(focusMode);
+  
+  // Use local state for rendering (fast - no parent updates during interaction)
+  const activeZoom = localZoom;
+  const activeScrollOffset = localScrollOffset;
+  const activeFocusMode = localFocusMode;
+  
+  // Track latest local state for sync on pad change
+  const localStateRef = useRef({ zoom: localZoom, scrollOffset: localScrollOffset, focusMode: localFocusMode });
+  
+  // Update ref when local state changes (no useEffect overhead)
+  localStateRef.current = { zoom: localZoom, scrollOffset: localScrollOffset, focusMode: localFocusMode };
+  
+  // Store callbacks in refs to avoid recreating useEffect on every render
+  const callbacksRef = useRef({ onZoomChange, onScrollOffsetChange, onFocusModeChange });
+  callbacksRef.current = { onZoomChange, onScrollOffsetChange, onFocusModeChange };
+  
+  // Handle pad changes - sync old pad and restore new pad (useLayoutEffect for synchronous execution)
+  useLayoutEffect(() => {
+    if (padId !== previousPadIdRef.current) {
+      const oldPadId = previousPadIdRef.current;
+      
+      // Pad changed - save old pad state directly to ref with old pad ID (not via callbacks!)
+      // useLayoutEffect runs synchronously before paint, ensuring ref is updated before next render
+      if (oldPadId !== undefined && waveformViewStateRef) {
+        const latest = localStateRef.current;
+        // Save directly to ref with the OLD pad ID
+        waveformViewStateRef.current.set(oldPadId, {
+          zoom: latest.zoom,
+          scrollOffset: latest.scrollOffset,
+          focusMode: latest.focusMode
+        });
+      }
+      
+      // Restore state from props for new pad
+      setLocalZoom(zoom);
+      setLocalScrollOffset(scrollOffset);
+      setLocalFocusMode(focusMode);
+      previousPadIdRef.current = padId;
+    }
+    // Only watch padId and props - NOT callbacks or local state
+  }, [padId, zoom, scrollOffset, focusMode, waveformViewStateRef]);
+  
+  // Cleanup on unmount - save current pad state (only depends on padId)
+  useEffect(() => {
+    return () => {
+      if (padId !== undefined) {
+        // Use refs to get latest values without dependencies
+        const latest = localStateRef.current;
+        const callbacks = callbacksRef.current;
+        callbacks.onZoomChange(latest.zoom);
+        callbacks.onScrollOffsetChange(latest.scrollOffset);
+        callbacks.onFocusModeChange(latest.focusMode);
+      }
+    };
+  }, [padId]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragTarget, setDragTarget] = useState<'start' | 'end' | null>(null);
   const [isAltHeld, setIsAltHeld] = useState(false);
@@ -54,9 +125,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   const { setHint } = useHint();
 
   const duration = sample.buffer.duration;
-  const viewDuration = duration / zoom;
+  const viewDuration = duration / activeZoom;
   const maxOffset = Math.max(0, duration - viewDuration);
-  const effectiveOffset = Math.min(scrollOffset, maxOffset);
+  const effectiveOffset = Math.min(activeScrollOffset, maxOffset);
 
   const HANDLE_PICK_RADIUS_PX = 40;
   const HANDLE_DIRECT_CLICK_RADIUS_PX = 20; // Smaller radius for direct clicks to switch sliders 
@@ -108,7 +179,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
     // STRICT RULE: If the currently focused slider is in pick range, ALWAYS use it
     // Only switch if the focused slider is NOT in range AND you click directly on the other one
-    if (focusMode === 'start') {
+    if (activeFocusMode === 'start') {
       if (isInStartPickRange) {
         // START is focused and in range - always use it
         target = 'start';
@@ -133,18 +204,18 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       setIsDragging(true);
       setDragTarget(target);
       // Only update focus mode if switching to a different slider
-      if (target !== focusMode) {
-        setFocusMode(target);
+      if (target !== activeFocusMode) {
+        setLocalFocusMode(target);
       }
     } else {
       // Clicking away from both sliders - use the currently focused one
       // Handle potential crossover when clicking
-      if (focusMode === 'start') {
+      if (activeFocusMode === 'start') {
         const newStart = Math.max(0, Math.min(timeAtX, duration));
         if (newStart > end) {
           // Crossed past end - swap
           onUpdate(end, newStart);
-          setFocusMode('end');
+          setLocalFocusMode('end');
           setDragTarget('end');
         } else {
           updateStart(timeAtX);
@@ -155,7 +226,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         if (newEnd < start) {
           // Crossed past start - swap
           onUpdate(newEnd, start);
-          setFocusMode('start');
+          setLocalFocusMode('start');
           setDragTarget('start');
         } else {
           updateEnd(timeAtX);
@@ -170,13 +241,13 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const moveNormX = (moveEvent.clientX - moveRect.left) / moveRect.width;
       const moveTime = effectiveOffset + moveNormX * viewDuration;
       
-      const activeTarget = dragTarget || focusMode;
+      const activeTarget = dragTarget || activeFocusMode;
       if (activeTarget === 'start') {
         const newStart = Math.max(0, Math.min(moveTime, duration));
         // Check if crossing past end - if so, swap values and focus
         if (newStart > end) {
           onUpdate(end, newStart);
-          setFocusMode('end');
+          setLocalFocusMode('end');
           setDragTarget('end');
         } else {
           updateStart(moveTime);
@@ -186,7 +257,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         // Check if crossing past start - if so, swap values and focus
         if (newEnd < start) {
           onUpdate(newEnd, start);
-          setFocusMode('start');
+          setLocalFocusMode('start');
           setDragTarget('start');
         } else {
           updateEnd(moveTime);
@@ -210,12 +281,13 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       if (e.altKey) setIsAltHeld(true);
       if (e.key === 'Tab') {
         e.preventDefault();
-        setFocusMode(prev => prev === 'start' ? 'end' : 'start');
+        const newFocusMode = activeFocusMode === 'start' ? 'end' : 'start';
+        setLocalFocusMode(newFocusMode);
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const nudge = e.shiftKey ? 0.05 : 0.001;
         const dir = e.key === 'ArrowLeft' ? -1 : 1;
-        if (focusMode === 'start') updateStart(start + dir * nudge);
+        if (activeFocusMode === 'start') updateStart(start + dir * nudge);
         else updateEnd(end + dir * nudge);
       }
     };
@@ -228,7 +300,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focusMode, start, end, updateStart, updateEnd]);
+  }, [activeFocusMode, start, end, updateStart, updateEnd]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -240,25 +312,33 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const rect = canvas.getBoundingClientRect();
       const normalizedX = (e.clientX - rect.left) / rect.width;
 
+      // Get current values from ref (always latest, no stale closures)
+      const currentZoom = localStateRef.current.zoom;
+      const currentScrollOffset = localStateRef.current.scrollOffset;
+      const currentDuration = sample.buffer.duration;
+      const currentViewDuration = currentDuration / currentZoom;
+      const currentMaxOffset = Math.max(0, currentDuration - currentViewDuration);
+      const currentEffectiveOffset = Math.min(currentScrollOffset, currentMaxOffset);
+
       if (e.ctrlKey || e.metaKey) {
         const zoomSpeed = 0.01;
         const zoomDelta = 1 - e.deltaY * zoomSpeed;
-        setZoom(prev => {
-          const next = Math.max(1, Math.min(prev * zoomDelta, 50000));
-          const timeAtMouse = effectiveOffset + normalizedX * (duration / prev);
-          const nextViewDur = duration / next;
-          setScrollOffset(Math.max(0, Math.min(timeAtMouse - normalizedX * nextViewDur, duration - nextViewDur)));
-          return next;
-        });
+        const next = Math.max(1, Math.min(currentZoom * zoomDelta, 50000));
+        const timeAtMouse = currentEffectiveOffset + normalizedX * (currentDuration / currentZoom);
+        const nextViewDur = currentDuration / next;
+        const newScrollOffset = Math.max(0, Math.min(timeAtMouse - normalizedX * nextViewDur, currentDuration - nextViewDur));
+        setLocalZoom(next);
+        setLocalScrollOffset(newScrollOffset);
       } else {
-        const scrollSpeed = (duration / zoom) / 1000;
+        const scrollSpeed = (currentDuration / currentZoom) / 1000;
         const moveX = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-        setScrollOffset(prev => Math.max(0, Math.min(prev + moveX * scrollSpeed, maxOffset)));
+        const newScrollOffset = Math.max(0, Math.min(currentScrollOffset + moveX * scrollSpeed, currentMaxOffset));
+        setLocalScrollOffset(newScrollOffset);
       }
     };
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  }, [duration, zoom, maxOffset, effectiveOffset]);
+  }, [sample.buffer.duration]); // Only recreate if sample changes
 
   const runPreviewAt = useCallback((time: number, looping: boolean) => {
     onPreview(time, looping);
@@ -276,12 +356,26 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   }, [previewActive]);
 
   // Restart loop when start/end changes during loop playback
+  // Only restart if the loop boundaries actually changed to avoid rapid restarts
   useEffect(() => {
     if (isLoopingPreview && previewActive) {
-      // Stop the current loop
-      audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
-      // Restart loop with new start/end values
-      runPreviewAt(start, true);
+      // Check if loop boundaries actually changed (with small threshold to avoid floating point issues)
+      const startChanged = Math.abs(start - lastLoopStartRef.current) > 0.0001;
+      const endChanged = Math.abs(end - lastLoopEndRef.current) > 0.0001;
+      
+      if (startChanged || endChanged) {
+        // Stop the current loop
+        audioEngine.stopExclusiveScheduled(audioEngine.ctx.currentTime, 'preview');
+        // Restart loop with new start/end values
+        runPreviewAt(start, true);
+        // Update refs to track the new loop boundaries
+        lastLoopStartRef.current = start;
+        lastLoopEndRef.current = end;
+      }
+    } else {
+      // Reset refs when loop is not active
+      lastLoopStartRef.current = start;
+      lastLoopEndRef.current = end;
     }
   }, [start, end, isLoopingPreview, previewActive, runPreviewAt]);
 
@@ -553,7 +647,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       isRendering = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [sample, zoom, effectiveOffset, viewDuration, duration, focusMode, start, end, playbackTrigger, isLoopingPreview]);
+  }, [sample, activeZoom, effectiveOffset, viewDuration, duration, activeFocusMode, start, end, playbackTrigger, isLoopingPreview]);
 
   return (
     <div 
@@ -587,14 +681,16 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
       {/* START BUTTON */}
       <button
-        onClick={() => setFocusMode('start')}
+        onClick={() => {
+          setLocalFocusMode('start');
+        }}
         onMouseEnter={() => setHint('START · SET POINT [TAB]')}
         onMouseLeave={() => setHint(null)}
         style={{
           position: 'absolute',
           width: '31px',
           height: '17px',
-          background: focusMode === 'start' ? '#FFFFFF' : 'transparent',
+          background: activeFocusMode === 'start' ? '#FFFFFF' : 'transparent',
           border: '2px solid #FFFFFF',
           boxSizing: 'border-box',
           top: `${BUTTONS_TOP}px`,
@@ -613,7 +709,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 500,
           fontSize: '10px',
           lineHeight: '12px',
-          color: focusMode === 'start' ? '#000000' : '#FFFFFF',
+          color: activeFocusMode === 'start' ? '#000000' : '#FFFFFF',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -624,7 +720,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
       {/* END BUTTON */}
       <button
-        onClick={() => setFocusMode('end')}
+        onClick={() => {
+          setLocalFocusMode('end');
+        }}
         onMouseEnter={() => setHint('END · SET POINT [TAB]')}
         onMouseLeave={() => setHint(null)}
         style={{
@@ -633,7 +731,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           height: '17px',
           border: '2px solid #FFFFFF',
           boxSizing: 'border-box',
-          background: focusMode === 'end' ? '#FFFFFF' : 'transparent',
+          background: activeFocusMode === 'end' ? '#FFFFFF' : 'transparent',
           top: `${BUTTONS_TOP}px`,
           left: `${END_LEFT}px`,
           // Add subtle transition for smoother visual feedback
@@ -650,7 +748,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 500,
           fontSize: '10px',
           lineHeight: '12px',
-          color: focusMode === 'end' ? '#000000' : '#FFFFFF',
+          color: activeFocusMode === 'end' ? '#000000' : '#FFFFFF',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -736,7 +834,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         left: `${POS_LEFT}px`,
         textAlign: 'right'
       }}>
-        {(focusMode === 'start' ? start : end).toFixed(6)}
+        {(activeFocusMode === 'start' ? start : end).toFixed(6)}
         </div>
 
       {/* LOOP BUTTON */}
@@ -877,14 +975,15 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
               const deltaPercent = deltaX / zoomSliderTotalWidth;
               const deltaTime = deltaPercent * duration;
               const newOffset = dragStartOffset + deltaTime;
-              setScrollOffset(Math.max(0, Math.min(newOffset, maxOffset)));
+              const clampedOffset = Math.max(0, Math.min(newOffset, maxOffset));
+              setLocalScrollOffset(clampedOffset);
             } else {
               // Clicking on track - center view on clicked position
               const normalizedX = Math.max(0, Math.min(1, moveX / zoomSliderTotalWidth));
               const targetTime = normalizedX * duration;
               // Center the view on the clicked position
               const newOffset = Math.max(0, Math.min(targetTime - (viewDuration / 2), maxOffset));
-              setScrollOffset(newOffset);
+              setLocalScrollOffset(newOffset);
             }
           };
           
@@ -898,7 +997,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
             const normalizedX = Math.max(0, Math.min(1, clickX / zoomSliderTotalWidth));
             const targetTime = normalizedX * duration;
             const newOffset = Math.max(0, Math.min(targetTime - (viewDuration / 2), maxOffset));
-            setScrollOffset(newOffset);
+            setLocalScrollOffset(newOffset);
           }
           
           window.addEventListener('mousemove', handleMouseMove);
@@ -934,7 +1033,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
               const deltaPercent = deltaX / sliderRect.width;
               const deltaTime = deltaPercent * duration;
               const newOffset = dragStartOffset + deltaTime;
-              setScrollOffset(Math.max(0, Math.min(newOffset, maxOffset)));
+              const clampedOffset = Math.max(0, Math.min(newOffset, maxOffset));
+              setLocalScrollOffset(clampedOffset);
             };
             
             const handleMouseUp = () => {

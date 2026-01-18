@@ -25,6 +25,9 @@ class AudioEngine {
   masterGain: GainNode;
   reverbNode: ConvolverNode;
   reverbGain: GainNode;
+  analyser: AnalyserNode | null = null;
+  leftAnalyser: AnalyserNode | null = null;
+  rightAnalyser: AnalyserNode | null = null;
   private activeTriggers: Set<TriggerInfo> = new Set();
   private exclusiveTriggers: Map<string, TriggerInfo> = new Map();
   private scheduledStopTimes: WeakMap<AudioBufferSourceNode, number> = new WeakMap();
@@ -89,6 +92,59 @@ class AudioEngine {
     // Remove event listener to prevent memory leak
     this.ctx.removeEventListener('statechange', this.stateChangeHandler);
     this.stopAll();
+  }
+
+  getAnalyser(): AnalyserNode | null {
+    // Lazy initialization: only create analyser when needed
+    if (!this.analyser) {
+      try {
+        this.analyser = this.ctx.createAnalyser();
+        this.analyser.minDecibels = -90;
+        this.analyser.maxDecibels = -10;
+        this.analyser.smoothingTimeConstant = 0.75;
+        this.analyser.fftSize = 512;
+        // Connect analyser to masterGain in parallel (passive tap)
+        // This does NOT interrupt the existing masterGain -> destination connection
+        this.masterGain.connect(this.analyser);
+      } catch (e) {
+        console.error("Failed to create analyser:", e);
+        return null;
+      }
+    }
+    return this.analyser;
+  }
+
+  getStereoAnalysers(): { left: AnalyserNode | null; right: AnalyserNode | null } {
+    // Lazy initialization: create stereo analysers when needed
+    if (!this.leftAnalyser || !this.rightAnalyser) {
+      try {
+        // Create channel splitter to separate left and right channels
+        const splitter = this.ctx.createChannelSplitter(2);
+        this.masterGain.connect(splitter);
+
+        // Create separate analysers for left and right channels
+        this.leftAnalyser = this.ctx.createAnalyser();
+        this.leftAnalyser.minDecibels = -90;
+        this.leftAnalyser.maxDecibels = -10;
+        this.leftAnalyser.smoothingTimeConstant = 0.75;
+        this.leftAnalyser.fftSize = 512;
+
+        this.rightAnalyser = this.ctx.createAnalyser();
+        this.rightAnalyser.minDecibels = -90;
+        this.rightAnalyser.maxDecibels = -10;
+        this.rightAnalyser.smoothingTimeConstant = 0.75;
+        this.rightAnalyser.fftSize = 512;
+
+        // Connect splitter outputs to respective analysers
+        // Channel 0 = left, Channel 1 = right
+        splitter.connect(this.leftAnalyser, 0);
+        splitter.connect(this.rightAnalyser, 1);
+      } catch (e) {
+        console.error("Failed to create stereo analysers:", e);
+        return { left: null, right: null };
+      }
+    }
+    return { left: this.leftAnalyser, right: this.rightAnalyser };
   }
 
   private generateReverbImpulse() {
@@ -606,10 +662,15 @@ class AudioEngine {
   playMetronome(time: number, isDownbeat: boolean) {
     const osc = this.ctx.createOscillator();
     const env = this.ctx.createGain();
+    // Use a StereoPannerNode with pan=0 to ensure mono oscillator goes to both channels
+    const panner = this.ctx.createStereoPanner();
+    panner.pan.setValueAtTime(0, time); // Center pan = both channels
     osc.frequency.setValueAtTime(isDownbeat ? 1200 : 800, time);
     env.gain.setValueAtTime(0.1, time);
     env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-    osc.connect(env); env.connect(this.masterGain);
+    osc.connect(env);
+    env.connect(panner);
+    panner.connect(this.masterGain);
     osc.start(time); osc.stop(time + 0.05);
     this.metronomeOscillators.add(osc);
     osc.onended = () => this.metronomeOscillators.delete(osc);

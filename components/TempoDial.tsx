@@ -45,8 +45,9 @@ const TempoDial: React.FC<TempoDialProps> = ({
 }) => {
   const dialRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
-  const dragStartYRef = useRef(0);
   const dragStartTempoRef = useRef(0);
+  const accumulatedDelta = useRef(0);
+  const lastClientY = useRef<number | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const { setHint } = useHint();
 
@@ -63,11 +64,24 @@ const TempoDial: React.FC<TempoDialProps> = ({
   };
 
   // Handle mouse down - start vertical drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = true;
-    dragStartYRef.current = e.clientY;
     dragStartTempoRef.current = tempo;
+    accumulatedDelta.current = 0;
+    lastClientY.current = e.clientY;
+    
+    // Request pointer lock for infinite drag behavior
+    const element = dialRef.current;
+    if (element) {
+      try {
+        await element.requestPointerLock();
+      } catch (err) {
+        // Pointer lock may fail in some browsers or contexts
+        console.warn('Pointer lock failed:', err);
+      }
+    }
+    
     onDragStart();
   }, [tempo, onDragStart]);
 
@@ -84,26 +98,68 @@ const TempoDial: React.FC<TempoDialProps> = ({
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
       
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Use movementY for relative movement (works with pointer lock)
+      // Fall back to clientY delta if pointer lock is not available
+      let deltaY: number;
+      if (e.movementY !== undefined && document.pointerLockElement) {
+        // Pointer lock is active - use relative movement
+        deltaY = -e.movementY;
+      } else {
+        // Fallback: calculate delta from clientY position
+        if (lastClientY.current !== null) {
+          deltaY = lastClientY.current - e.clientY;
+          lastClientY.current = e.clientY;
+        } else {
+          deltaY = 0;
+          lastClientY.current = e.clientY;
+        }
+      }
+      
+      // Accumulate delta for smooth continuous adjustment
+      accumulatedDelta.current += deltaY;
+      
       // Vertical drag: up increases, down decreases
-      const deltaY = dragStartYRef.current - e.clientY;
       const sensitivity = 2;
-      const newTempo = clampTempo(dragStartTempoRef.current + deltaY / sensitivity);
+      const newTempo = clampTempo(dragStartTempoRef.current + accumulatedDelta.current / sensitivity);
       onTempoChange(newTempo);
     };
 
     const handleMouseUp = () => {
       if (isDraggingRef.current) {
         isDraggingRef.current = false;
+        lastClientY.current = null;
+        
+        // Exit pointer lock
+        if (document.pointerLockElement) {
+          document.exitPointerLock();
+        }
+        
+        onDragEnd();
+      }
+    };
+    
+    // Handle pointer lock change events
+    const handlePointerLockChange = () => {
+      // If pointer lock was released (e.g., ESC key), stop dragging
+      if (!document.pointerLockElement && isDraggingRef.current) {
+        isDraggingRef.current = false;
+        lastClientY.current = null;
         onDragEnd();
       }
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    const options = { capture: true, passive: false };
+    window.addEventListener('mousemove', handleMouseMove, options);
+    window.addEventListener('mouseup', handleMouseUp, options);
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove, options);
+      window.removeEventListener('mouseup', handleMouseUp, options);
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
   }, [onTempoChange, onDragEnd]);
 

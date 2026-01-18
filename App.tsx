@@ -15,6 +15,7 @@ import EffectsPanel from './components/EffectsPanel';
 import SongBankOverlay from './components/SongBankOverlay';
 import PadBankOverlay from './components/PadBankOverlay';
 import Dividers from './components/Dividers';
+import LevelMeter from './components/LevelMeter';
 import { HintProvider, HintDisplay, useHint } from './components/HintDisplay';
 import TransportButtons from './components/TransportButtons';
 import { randomUUID } from './utils/uuid';
@@ -96,6 +97,10 @@ export default function App() {
   // Drag and Drop State
   const [draggedStepIdx, setDraggedStepIdx] = useState<number | null>(null);
   const [dropIndicatorIdx, setDropIndicatorIdx] = useState<number | null>(null);
+  
+  // Waveform editor view state per pad (zoom, scrollOffset, focusMode)
+  // Use ref to avoid re-renders during interaction - updates don't trigger re-renders
+  const waveformViewStateRef = useRef<Map<number, { zoom: number; scrollOffset: number; focusMode: 'start' | 'end' }>>(new Map());
 
   // Tempo Tapping / Dragging State
   const [isTapping, setIsTapping] = useState(false);
@@ -118,6 +123,8 @@ export default function App() {
   const timerIDRef = useRef<number | null>(null);
   const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const activePadTimeoutRefs = useRef<Map<number, number>>(new Map());
+  const lastTriggerInfoRef = useRef<{padId: number, trigger: TriggerInfo} | null>(null);
+  const previewActiveRef = useRef<boolean>(false);
 
   const padsRef = useRef<PadConfig[]>(pads);
   const patternsRef = useRef<Pattern[]>(patterns);
@@ -141,6 +148,7 @@ export default function App() {
   useEffect(() => { currentPatternIdRef.current = currentPatternId; }, [currentPatternId]);
   useEffect(() => { arrangementBanksRef.current = arrangementBanks; }, [arrangementBanks]);
   useEffect(() => { activeArrIdxRef.current = activeArrIdx; }, [activeArrIdx]);
+  useEffect(() => { lastTriggerInfoRef.current = lastTriggerInfo; }, [lastTriggerInfo]);
   useEffect(() => { currentSongStepIdxRef.current = currentSongStepIdx; }, [currentSongStepIdx]);
   useEffect(() => { tempoRef.current = tempo; }, [tempo]);
   useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
@@ -289,6 +297,16 @@ export default function App() {
     }
   }, []);
 
+  const stopRegularPadPlayback = useCallback(() => {
+    if (lastTriggerInfoRef.current) {
+      try {
+        lastTriggerInfoRef.current.trigger.source.stop();
+      } catch (e) {}
+      setLastTriggerInfo(null);
+      lastTriggerInfoRef.current = null;
+    }
+  }, []);
+
   const killAllAudio = useCallback(() => {
     try {
       audioEngine.stopAll();
@@ -361,6 +379,8 @@ export default function App() {
 
   const [previewActive, setPreviewActive] = useState(false);
   const [previewingPadId, setPreviewingPadId] = useState<number | null>(null);
+  
+  useEffect(() => { previewActiveRef.current = previewActive; }, [previewActive]);
 
   const triggerPad = useCallback((padId: number, offsetOverride?: number, looping: boolean = false) => {
     const pad = padsRef.current.find(p => p.id === padId);
@@ -371,12 +391,17 @@ export default function App() {
     const contextId = offsetOverride !== undefined ? 'preview' : 'manual';
 
     if (offsetOverride !== undefined) {
+      // Starting preview playback - stop any existing preview and regular pad playback
       if (previewSourceRef.current) {
          try { previewSourceRef.current.stop(); } catch (e) {}
          previewSourceRef.current = null;
       }
+      stopRegularPadPlayback();
       setPreviewActive(true);
       setPreviewingPadId(padId);
+    } else {
+      // Starting regular pad playback - stop any existing preview playback
+      stopPreview();
     }
 
     const trigger = audioEngine.playPad(sample.buffer, pad, offsetOverride, contextId, looping);
@@ -465,7 +490,7 @@ export default function App() {
     }, 80);
     
     activePadTimeoutRefs.current.set(padId, timeoutId);
-  }, [currentPass, quantizeMode, killAllAudio]);
+  }, [currentPass, quantizeMode, killAllAudio, stopPreview, stopRegularPadPlayback]);
 
   const toggleTransportRef = useRef<() => void>(() => {});
 
@@ -635,8 +660,15 @@ export default function App() {
 
   const toggleTransport = useCallback(() => {
     // If preview is playing, stop it first without toggling transport
-    if (previewSourceRef.current) {
+    // Check both ref and state to catch all cases
+    if (previewSourceRef.current || previewActiveRef.current) {
       stopPreview();
+      return;
+    }
+    
+    // If regular pad playback is happening, stop it first without toggling transport
+    if (lastTriggerInfoRef.current) {
+      stopRegularPadPlayback();
       return;
     }
 
@@ -687,7 +719,7 @@ export default function App() {
       setTransport(TransportStatus.PLAYING);
       scheduler();
     }
-  }, [killAllAudio, scheduler, currentSongStepIdx, stopPreview]);
+  }, [killAllAudio, scheduler, currentSongStepIdx, stopPreview, stopRegularPadPlayback]);
 
   useEffect(() => { toggleTransportRef.current = toggleTransport; }, [toggleTransport]);
 
@@ -1065,10 +1097,17 @@ export default function App() {
       const pad = bankPads.find(p => p.keyCode === e.code);
       if (pad) { 
         e.preventDefault(); 
-        // If pad is unassigned (no sample), automatically select it for editing
-        const sample = samplesRef.current.find(s => s.id === pad.sampleId);
-        if (!pad.sampleId || !sample) {
-          setSelectedPadId(pad.id);
+        // Always select the pad when pressing its key (for navigation)
+        if (selectedPadId !== pad.id) {
+          stopPreview();
+        }
+        setSelectedPadId(pad.id);
+        // Also select the pad's sample in the library if it has one
+        if (pad.sampleId) {
+          const sample = samplesRef.current.find(s => s.id === pad.sampleId);
+          if (sample) {
+            setSelectedSampleId(pad.sampleId);
+          }
         }
         triggerPad(pad.id); 
       }
@@ -1094,7 +1133,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap]);
+  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap, selectedPadId, stopPreview, setSelectedPadId, setSelectedSampleId]);
 
   // Audio analysis for reactive visuals - runs continuously to react to ALL audio
   // Blur buttons after mouse click to prevent spacebar from triggering them
@@ -1288,6 +1327,7 @@ export default function App() {
         handleDrop={handleDrop}
         editingPatternId={editingPatternId}
         setEditingPatternId={setEditingPatternId}
+        waveformViewStateRef={waveformViewStateRef}
       />
     </HintProvider>
   );
@@ -1373,6 +1413,7 @@ const AppContent: React.FC<{
   handleDrop: (e: React.DragEvent, idx: number) => void;
   editingPatternId: string | null;
   setEditingPatternId: (id: string | null) => void;
+  waveformViewStateRef: React.MutableRefObject<Map<number, { zoom: number; scrollOffset: number; focusMode: 'start' | 'end' }>>;
 }> = (props) => {
   const { setHint } = useHint();
 
@@ -1754,7 +1795,7 @@ const AppContent: React.FC<{
                                 return (
                                   <div 
                                     key={p.id}
-                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black') : isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-white group-hover/section:border-black'}`}
+                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black') : isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-black hover:border-black group-hover/section:border-black'}`}
                                     onMouseEnter={() => setHint(`PATTERN: ${p.name} · ${isActive ? 'REMOVE FROM SECTION' : 'ADD TO SECTION'}`)}
                                     onMouseLeave={() => setHint(null)}
                                     onClick={() => {
@@ -1770,7 +1811,7 @@ const AppContent: React.FC<{
                                     }}
                                   >
                                     <span 
-                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive ? (isSelected ? 'text-white' : 'text-black group-hover/section:text-white') : isSelected ? 'text-black group-hover/pattern:text-white' : 'text-white group-hover/section:text-black group-hover/pattern:text-black'}`}
+                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive ? (isSelected ? 'text-white' : 'text-black group-hover/section:text-white') : isSelected ? 'text-black group-hover/pattern:text-white' : 'text-white group-hover/section:text-black group-hover/pattern:text-white'}`}
                                       style={{ fontFamily: 'Barlow Condensed' }}
                                     >
                                       {p.name}
@@ -2454,6 +2495,7 @@ const AppContent: React.FC<{
         {/* MIDDLE TOP - Transport Display - centered to frame: (1288 - 416) / 2 = 436, relative to middle col start at 380: 436 - 380 = 56px offset */}
         {/* Top margin of 22px aligns with left and right columns */}
         <div style={{ width: '416px', flexShrink: 0, marginLeft: '56px', marginTop: '22px', position: 'relative' }} className="display-bg">
+
           {/* Top Row: Mode, Transport Buttons, Location */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: '#FFFFFF', marginTop: '-2px' }}>
@@ -2474,7 +2516,7 @@ const AppContent: React.FC<{
 
           {/* Current Time Segment Display - 14px below buttons (buttons end at 52px from top, so this starts at 66px) */}
           <div 
-            style={{ display: 'flex', justifyContent: 'center', marginTop: '34px' }}
+            style={{ display: 'flex', justifyContent: 'center', marginTop: '34px', position: 'relative', zIndex: 1 }}
             onMouseEnter={() => setHint('TIME: CURRENT POSITION')}
             onMouseLeave={() => setHint(null)}
           >
@@ -2483,7 +2525,7 @@ const AppContent: React.FC<{
 
           {/* Total Time Segment Display - 14px below current time */}
           <div 
-            style={{ display: 'flex', justifyContent: 'center', marginTop: '14px' }}
+            style={{ display: 'flex', justifyContent: 'center', marginTop: '14px', position: 'relative', zIndex: 1 }}
             onMouseEnter={() => setHint('TIME: TOTAL DURATION')}
             onMouseLeave={() => setHint(null)}
           >
@@ -2501,6 +2543,17 @@ const AppContent: React.FC<{
           <div className="h-px w-full bg-[#333333] relative" style={{ marginTop: '8px' }}>
             <div ref={props.progressBarRef} className="h-full absolute" style={{ backgroundColor: '#FFFFFF' }} />
           </div>
+
+          {/* Level Meters - Symmetrical layout:
+              Leftmost: left channel, low freq (bass/low-mid)
+              Second from left: left channel, high freq (high-mid/treble)
+              Second from right: right channel, high freq (high-mid/treble)
+              Rightmost: right channel, low freq (bass/low-mid)
+          */}
+          <LevelMeter channel="left" frequencyBand="low" />
+          <LevelMeter channel="left" frequencyBand="high" />
+          <LevelMeter channel="right" frequencyBand="high" />
+          <LevelMeter channel="right" frequencyBand="low" />
         </div>
 
         {/* MIDDLE CENTER - Pad Grid - 36px below progress bar, centered to frame (same 56px offset) */}
@@ -2657,6 +2710,14 @@ const AppContent: React.FC<{
             const activeSample = sample || emptySample;
             const activePad = pad || { start: 0, end: 0.001, isReversed: false, playMode: 'MONO' as const };
             
+            // Get waveform view state for the selected pad (or defaults) - read from ref
+            const padViewState = props.selectedPadId !== null 
+              ? props.waveformViewStateRef.current.get(props.selectedPadId) 
+              : null;
+            const zoom = padViewState?.zoom ?? 1;
+            const scrollOffset = padViewState?.scrollOffset ?? 0;
+            const focusMode = padViewState?.focusMode ?? 'start';
+            
             return (
               <WaveformEditor 
                 sample={activeSample} 
@@ -2688,6 +2749,37 @@ const AppContent: React.FC<{
                     props.setPads(prev => prev.map(p => p.id === props.selectedPadId ? { ...p, playMode: p.playMode === 'POLY' ? 'MONO' : 'POLY' } : p));
                   }
                 }}
+                zoom={zoom}
+                onZoomChange={(newZoom) => {
+                  // Update ref immediately (no re-render)
+                  if (props.selectedPadId !== null) {
+                    const padId = props.selectedPadId;
+                    const existingState = props.waveformViewStateRef.current.get(padId);
+                    const currentState = existingState ?? { zoom: 1, scrollOffset: 0, focusMode: 'start' as const };
+                    props.waveformViewStateRef.current.set(padId, { zoom: newZoom, scrollOffset: currentState.scrollOffset, focusMode: currentState.focusMode });
+                  }
+                }}
+                scrollOffset={scrollOffset}
+                onScrollOffsetChange={(newScrollOffset) => {
+                  // Update ref immediately (no re-render)
+                  if (props.selectedPadId !== null) {
+                    const padId = props.selectedPadId;
+                    const existingState = props.waveformViewStateRef.current.get(padId);
+                    const currentState = existingState ?? { zoom: 1, scrollOffset: 0, focusMode: 'start' as const };
+                    props.waveformViewStateRef.current.set(padId, { zoom: currentState.zoom, scrollOffset: newScrollOffset, focusMode: currentState.focusMode });
+                  }
+                }}
+                focusMode={focusMode}
+                onFocusModeChange={(newFocusMode) => {
+                  // Update ref immediately (no re-render)
+                  if (props.selectedPadId !== null) {
+                    const padId = props.selectedPadId;
+                    const existingState = props.waveformViewStateRef.current.get(padId);
+                    const currentState = existingState ?? { zoom: 1, scrollOffset: 0, focusMode: 'start' as const };
+                    props.waveformViewStateRef.current.set(padId, { zoom: currentState.zoom, scrollOffset: currentState.scrollOffset, focusMode: newFocusMode });
+                  }
+                }}
+                waveformViewStateRef={props.waveformViewStateRef}
               />
             );
           })()}
