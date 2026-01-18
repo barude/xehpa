@@ -48,6 +48,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   onFocusModeChange,
   waveformViewStateRef
 }) => {
+  // Hover and flash state for MONO button
+  const [isMonoHovered, setIsMonoHovered] = useState(false);
+  const [isMonoFlashing, setIsMonoFlashing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -782,16 +785,33 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
 
       {/* MONO/POLY TOGGLE - Circle */}
       <button
-        onClick={onTogglePlayMode}
+        onClick={() => {
+          onTogglePlayMode?.();
+          // Flash to transparent bg/white text (inactive visual state)
+          setIsMonoFlashing(true);
+          setTimeout(() => {
+            setIsMonoFlashing(false);
+          }, 150);
+        }}
         className="circular-button"
-        onMouseEnter={() => setHint('PLAY MODE · TOGGLE')}
-        onMouseLeave={() => setHint(null)}
+        onMouseEnter={() => {
+          setIsMonoHovered(true);
+          setHint('PLAY MODE · TOGGLE');
+        }}
+        onMouseLeave={() => {
+          setIsMonoHovered(false);
+          setHint(null);
+        }}
         style={{
           position: 'absolute',
           width: '29px',
           height: '29px',
-          background: playMode === 'MONO' ? '#FFFFFF' : 'transparent',
-          border: playMode === 'MONO' ? 'none' : '2px solid #FFFFFF',
+          background: isMonoFlashing 
+            ? 'transparent'
+            : (isMonoHovered ? '#FFFFFF' : (playMode === 'MONO' ? '#FFFFFF' : 'transparent')),
+          border: isMonoFlashing 
+            ? '2px solid #FFFFFF'
+            : (isMonoHovered ? '2px solid #FFFFFF' : (playMode === 'MONO' ? 'none' : '2px solid #FFFFFF')),
           boxSizing: 'border-box',
           top: `${MONO_TOP}px`,
           left: `${MONO_LEFT}px`,
@@ -812,7 +832,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 500,
           fontSize: '10px',
           lineHeight: '12px',
-          color: playMode === 'MONO' ? '#000000' : '#FFFFFF',
+          color: isMonoFlashing
+            ? '#FFFFFF'
+            : (isMonoHovered ? '#000000' : (playMode === 'MONO' ? '#000000' : '#FFFFFF')),
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',

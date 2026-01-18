@@ -331,22 +331,26 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ channel, frequencyBand }) => {
   const COLUMN_WIDTH = 24; // Width of each column in pixels (wider by 5px)
 
   // Calculate number of active segments based on level
-  // Map from [0, 1] to [1, NUM_SEGMENTS]
-  // Idle (level = 0) shows 1 bar, small sounds show 1 bar, louder sounds scale up
+  // Map from [threshold, 1] to [0, NUM_SEGMENTS]
+  // Idle (level <= threshold) shows 0 bars, bars only appear when music starts playing
   const getActiveSegments = (level: number): number => {
-    // Always show minimum 1 bar (for idle state)
-    if (level <= 0) {
-      return 1; // Idle state: 1 bar
+    // Threshold below which we consider the state idle (no bars visible)
+    const idleThreshold = 0.01; // ~1% level threshold for idle detection
+    
+    if (level <= idleThreshold) {
+      return 0; // Idle state: no bars visible
     }
     
     // Use exponential scaling to compress dynamic range and prevent clipping
     // Apply moderate exponential curve: level^1.8 to make response less dramatic
     // This gives better visual range without hitting max on soft sounds
-    const scaledLevel = Math.pow(level, 1.8); // Moderate exponential curve for balanced sensitivity
+    // Normalize level from [threshold, 1] to [0, 1] before scaling
+    const normalizedLevel = (level - idleThreshold) / (1 - idleThreshold);
+    const scaledLevel = Math.pow(normalizedLevel, 1.8); // Moderate exponential curve for balanced sensitivity
     
-    // Map scaled level to segments: 1 bar minimum, then scale from 1 to NUM_SEGMENTS
+    // Map scaled level to segments: scale from 1 to NUM_SEGMENTS
     const segments = Math.floor(1 + (scaledLevel * (NUM_SEGMENTS - 1)));
-    return Math.max(1, Math.min(NUM_SEGMENTS, segments));
+    return Math.max(0, Math.min(NUM_SEGMENTS, segments));
   };
 
   const active = getActiveSegments(level);

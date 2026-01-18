@@ -166,14 +166,21 @@ const Knob: React.FC<KnobProps> = ({
     (e: React.WheelEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const delta = e.deltaY > 0 ? -step : step;
-      const newValue = clampValue(value + delta);
-      if (Math.abs(newValue - value) > step / 2) {
+      // Use range-based sensitivity similar to drag sensitivity for consistency
+      // For small ranges, ensure we use at least the step size for responsiveness
+      // For large ranges, scale proportionally for smooth scrolling
+      const range = max - min;
+      const rangeBasedSensitivity = range / 50; // More sensitive than drag (50 vs 200)
+      const scrollSensitivity = Math.max(step, rangeBasedSensitivity);
+      const scrollDelta = e.deltaY > 0 ? -scrollSensitivity : scrollSensitivity;
+      const newValue = clampValue(value + scrollDelta);
+      // Only update if change is significant enough (at least half a step)
+      if (Math.abs(newValue - value) >= step / 2) {
         onChange(newValue);
         onHover?.(true, newValue);
       }
     },
-    [value, step, clampValue, onChange, onHover]
+    [value, min, max, step, clampValue, onChange, onHover]
   );
 
   // Add wheel event listener with passive: false to allow preventDefault
@@ -184,9 +191,16 @@ const Knob: React.FC<KnobProps> = ({
     const wheelHandler = (e: WheelEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const delta = e.deltaY > 0 ? -step : step;
-      const newValue = clampValue(value + delta);
-      if (Math.abs(newValue - value) > step / 2) {
+      // Use range-based sensitivity similar to drag sensitivity for consistency
+      // For small ranges, ensure we use at least the step size for responsiveness
+      // For large ranges, scale proportionally for smooth scrolling
+      const range = max - min;
+      const rangeBasedSensitivity = range / 50; // More sensitive than drag (50 vs 200)
+      const scrollSensitivity = Math.max(step, rangeBasedSensitivity);
+      const scrollDelta = e.deltaY > 0 ? -scrollSensitivity : scrollSensitivity;
+      const newValue = clampValue(value + scrollDelta);
+      // Only update if change is significant enough (at least half a step)
+      if (Math.abs(newValue - value) >= step / 2) {
         onChange(newValue);
         onHover?.(true, newValue);
       }
@@ -196,7 +210,7 @@ const Knob: React.FC<KnobProps> = ({
     return () => {
       element.removeEventListener('wheel', wheelHandler);
     };
-  }, [value, step, clampValue, onChange, onHover]);
+  }, [value, min, max, step, clampValue, onChange, onHover]);
 
   const handleMouseEnter = useCallback(() => {
     setIsHovered(true);
