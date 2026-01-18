@@ -31,8 +31,8 @@ const KNOB_CONFIG = {
   
   // Small knobs (43px diameter, radius 21.5)
   reverb: { 
-    cx: 22, cy: 97,
-    labelOffset: { x: 46, y: 15 },  // lower-right
+    cx: 19, cy: 97,
+    labelOffset: { x: 41, y: 15 },  // positioned at 450px from frame left
   },
   atk: { 
     cx: 170, cy: 97,
@@ -299,7 +299,7 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ pad, onPadChange }) => {
           max={1}
           step={0.01}
           size="small"
-          label="REVERB"
+          label="RVRB"
           labelOffset={KNOB_CONFIG.reverb.labelOffset}
           onChange={(v) => onPadChange({ reverbSend: v })}
           onHover={(h, v) => handleHover('reverb', h, v)}
