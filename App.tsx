@@ -1288,7 +1288,7 @@ export default function App() {
     // After at least one pattern has hits, introduce mode awareness
     // 6. Song Mode is OFF
     if (!isSongMode) {
-      return 'SWITCH TO SONG MODE TO ARRANGE';
+      return 'SWITCH TO SONG MODE TO ARRANGE [ALT+CMD]';
     }
 
     // 7. Song Mode is ON, check active arrangement bank

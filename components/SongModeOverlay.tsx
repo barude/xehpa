@@ -33,7 +33,7 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
 
   const handleMouseEnter = useCallback(() => {
     setIsHovered(true);
-    setHint('SONG MODE: TOGGLE');
+    setHint('SONG MODE: TOGGLE [ALT+CMD]');
   }, [setHint]);
 
   const handleMouseLeave = useCallback(() => {
