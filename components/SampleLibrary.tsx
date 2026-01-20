@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { SampleData } from '../types';
 import { deleteSampleFromDB } from '../services/db';
 import { useHint } from './HintDisplay';
@@ -42,19 +42,6 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // #region agent log
-  useEffect(() => {
-    fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:45',message:'Component render with state',data:{hoveredButton, pressedButton, hoveredSampleId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // Check CSS variable values
-    const root = getComputedStyle(document.documentElement);
-    const hoverBg = root.getPropertyValue('--color-hover-bg').trim();
-    const hoverFg = root.getPropertyValue('--color-hover-fg').trim();
-    const activeBg = root.getPropertyValue('--color-active-bg').trim();
-    const activeFg = root.getPropertyValue('--color-active-fg').trim();
-    fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:52',message:'CSS variable values',data:{hoverBg, hoverFg, activeBg, activeFg},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  }, [hoveredButton, pressedButton, hoveredSampleId]);
-  // #endregion
-
   return (
     <div
       className="sample-library-container"
@@ -86,19 +73,10 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
         <button
           onClick={onLoadSample}
           onMouseEnter={() => {
-            // #region agent log
-            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:75',message:'onMouseEnter fired for LOAD SAMPLE',data:{hoveredButton, pressedButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             setHint('LOAD SAMPLE · MULTIPLE FILES');
             setHoveredButton('load-sample');
-            // #region agent log
-            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:80',message:'setHoveredButton called with load-sample',data:{previousHoveredButton:hoveredButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
           }}
           onMouseLeave={() => {
-            // #region agent log
-            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:84',message:'onMouseLeave fired for LOAD SAMPLE',data:{hoveredButton, pressedButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             setHint(null);
             setHoveredButton(null);
           }}
@@ -119,25 +97,17 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             fontSize: '10px',
             lineHeight: '12px',
             color: (() => {
-              // #region agent log
               const isHovered = hoveredButton === 'load-sample' || pressedButton === 'load-sample';
               // Sample library buttons need inverted hover: black bg, white text (opposite of default white bg, black text)
-              const colorValue = isHovered ? 'var(--color-fg)' : 'var(--color-active-fg)';
-              fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:101',message:'LOAD SAMPLE color style evaluation',data:{hoveredButton, pressedButton, isHovered, colorValue},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'C'})}).catch(()=>{});
-              // #endregion
-              return colorValue;
+              return isHovered ? 'var(--color-fg)' : 'var(--color-active-fg)';
             })(),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: (() => {
-              // #region agent log
               const isHovered = hoveredButton === 'load-sample' || pressedButton === 'load-sample';
               // Sample library buttons need inverted hover: black bg, white text (opposite of default white bg, black text)
-              const bgValue = isHovered ? 'var(--color-bg)' : 'var(--color-active-bg)';
-              fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:108',message:'LOAD SAMPLE backgroundColor style evaluation',data:{hoveredButton, pressedButton, isHovered, bgValue},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix2',hypothesisId:'C'})}).catch(()=>{});
-              // #endregion
-              return bgValue;
+              return isHovered ? 'var(--color-bg)' : 'var(--color-active-bg)';
             })(),
             cursor: 'pointer',
             padding: 0,
