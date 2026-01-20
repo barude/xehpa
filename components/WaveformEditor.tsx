@@ -513,22 +513,24 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const bgColor = root.getPropertyValue('--color-bg').trim() || '#000000';
       const fgColor = root.getPropertyValue('--color-fg').trim() || '#FFFFFF';
       
-      // Helper function to determine if a color is light or dark
-      const isLightColor = (color: string): boolean => {
-        // Remove # if present
-        const hex = color.replace('#', '');
-        // Convert to RGB
-        const r = parseInt(hex.substring(0, 2), 16);
-        const g = parseInt(hex.substring(2, 4), 16);
-        const b = parseInt(hex.substring(4, 6), 16);
-        // Calculate luminance (perceived brightness)
-        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-        return luminance > 0.5;
+      // Calculate playhead color for optimal visibility
+      // In light themes, use white to ensure visibility over both light backgrounds and dark waveforms
+      // In dark themes, use fgColor (existing behavior) to maintain current appearance
+      const hexToRgb = (hex: string) => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+          r: parseInt(result[1], 16),
+          g: parseInt(result[2], 16),
+          b: parseInt(result[3], 16)
+        } : null;
       };
       
-      // Determine playhead color: use opposite of background for maximum contrast
-      const isBgLight = isLightColor(bgColor);
-      const playheadColor = isBgLight ? '#000000' : '#FFFFFF';
+      const bgRgb = hexToRgb(bgColor);
+      const isLightTheme = bgRgb && (bgRgb.r + bgRgb.g + bgRgb.b) > 384; // Threshold for light background
+      
+      // For light themes, use white to ensure visibility over both light and dark areas
+      // For dark themes, use fgColor (existing behavior) to maintain current appearance
+      const playheadColor = isLightTheme ? '#FFFFFF' : fgColor;
 
       // Calculate selected area boundaries early (needed for waveform rendering)
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
@@ -740,9 +742,12 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           
           const phX = timeToX(phTime);
           if (phX >= 0 && phX <= displayWidth) {
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
             ctx.strokeStyle = playheadColor;
             ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
+            ctx.globalCompositeOperation = prevOp;
           }
         }
       }
@@ -766,11 +771,14 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         } else if (phTime <= duration && (!isLoopingPreview || phTime <= end + 0.1)) {
           const ghX = timeToX(phTime);
           if (ghX >= 0 && ghX <= displayWidth) {
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
             ctx.strokeStyle = playheadColor;
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
             ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
             ctx.setLineDash([]);
+            ctx.globalCompositeOperation = prevOp;
           }
         }
       }
@@ -1232,8 +1240,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)',
-          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
+          color: 'var(--color-text)'
         }}>
           ALT+CLICK: PLAY
         </div>
@@ -1247,8 +1254,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)',
-          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
+          color: 'var(--color-text)'
         }}>
           L/R CLICK: SWITCH POINT
         </div>
@@ -1262,8 +1268,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)',
-          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
+          color: 'var(--color-text)'
         }}>
           PINCH: ZOOM
         </div>
