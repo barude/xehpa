@@ -512,6 +512,23 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const root = getComputedStyle(document.documentElement);
       const bgColor = root.getPropertyValue('--color-bg').trim() || '#000000';
       const fgColor = root.getPropertyValue('--color-fg').trim() || '#FFFFFF';
+      
+      // Helper function to determine if a color is light or dark
+      const isLightColor = (color: string): boolean => {
+        // Remove # if present
+        const hex = color.replace('#', '');
+        // Convert to RGB
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+        // Calculate luminance (perceived brightness)
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        return luminance > 0.5;
+      };
+      
+      // Determine playhead color: use opposite of background for maximum contrast
+      const isBgLight = isLightColor(bgColor);
+      const playheadColor = isBgLight ? '#000000' : '#FFFFFF';
 
       // Calculate selected area boundaries early (needed for waveform rendering)
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
@@ -723,12 +740,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           
           const phX = timeToX(phTime);
           if (phX >= 0 && phX <= displayWidth) {
-            const prevOp = ctx.globalCompositeOperation;
-            ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = fgColor;
+            ctx.strokeStyle = playheadColor;
             ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
-            ctx.globalCompositeOperation = prevOp;
           }
         }
       }
@@ -752,14 +766,11 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         } else if (phTime <= duration && (!isLoopingPreview || phTime <= end + 0.1)) {
           const ghX = timeToX(phTime);
           if (ghX >= 0 && ghX <= displayWidth) {
-            const prevOp = ctx.globalCompositeOperation;
-            ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = fgColor;
+            ctx.strokeStyle = playheadColor;
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
             ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
             ctx.setLineDash([]);
-            ctx.globalCompositeOperation = prevOp;
           }
         }
       }
@@ -1221,7 +1232,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)'
+          color: 'var(--color-text)',
+          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
         }}>
           ALT+CLICK: PLAY
         </div>
@@ -1235,7 +1247,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)'
+          color: 'var(--color-text)',
+          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
         }}>
           L/R CLICK: SWITCH POINT
         </div>
@@ -1249,7 +1262,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: 'var(--color-text)'
+          color: 'var(--color-text)',
+          textShadow: '0 0 2px var(--color-bg), 0 0 2px var(--color-bg), 0 0 2px var(--color-bg)'
         }}>
           PINCH: ZOOM
         </div>
