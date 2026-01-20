@@ -31,9 +31,9 @@ import loadJSZip from './services/jszip-shim';
 import { showError, showWarning } from './utils/errors';
 
 // Theme definitions
-export type Theme = 'blk' | 'inv' | 'amb' | 'prp' | 'neo' | 'sky' | 'red' | 'hzd' | 'blu' | 'arc';
+export type Theme = 'blk' | 'inv' | 'red' | 'arc' | 'neo' | 'blu';
 
-const THEMES: Theme[] = ['blk', 'inv', 'amb', 'prp', 'neo', 'sky', 'red', 'hzd', 'blu', 'arc'];
+const THEMES: Theme[] = ['blk', 'inv', 'red', 'arc', 'neo', 'blu'];
 
 const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
   switch (theme) {
@@ -41,22 +41,14 @@ const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
       return { bg: '#0A0908', fg: '#F0EDEE' };
     case 'inv':
       return { bg: '#F2F4F3', fg: '#0A0908' };
-    case 'amb':
-      return { bg: '#0A0908', fg: '#EEC643' };
-    case 'prp':
-      return { bg: '#6E2594', fg: '#ECD444' };
-    case 'neo':
-      return { bg: '#0A100D', fg: '#5CF64A' };
-    case 'sky':
-      return { bg: '#F8FFE5', fg: '#2BA9FD' };
     case 'red':
       return { bg: '#0A0908', fg: '#EA2B1F' };
-    case 'hzd':
-      return { bg: '#FABC3C', fg: '#EA2B1F' };
-    case 'blu':
-      return { bg: '#29339B', fg: '#FBFEF9' };
     case 'arc':
       return { bg: '#EDEEC0', fg: '#433E0E' };
+    case 'neo':
+      return { bg: '#0A100D', fg: '#5CF64A' };
+    case 'blu':
+      return { bg: '#29339B', fg: '#FBFEF9' };
     default:
       return { bg: '#0A0908', fg: '#F0EDEE' };
   }
