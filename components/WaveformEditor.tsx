@@ -512,25 +512,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const root = getComputedStyle(document.documentElement);
       const bgColor = root.getPropertyValue('--color-bg').trim() || '#000000';
       const fgColor = root.getPropertyValue('--color-fg').trim() || '#FFFFFF';
-      
-      // Calculate playhead color for optimal visibility
-      // In light themes, use white to ensure visibility over both light backgrounds and dark waveforms
-      // In dark themes, use fgColor (existing behavior) to maintain current appearance
-      const hexToRgb = (hex: string) => {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result ? {
-          r: parseInt(result[1], 16),
-          g: parseInt(result[2], 16),
-          b: parseInt(result[3], 16)
-        } : null;
-      };
-      
-      const bgRgb = hexToRgb(bgColor);
-      const isLightTheme = bgRgb && (bgRgb.r + bgRgb.g + bgRgb.b) > 384; // Threshold for light background
-      
-      // For light themes, use white to ensure visibility over both light and dark areas
-      // For dark themes, use fgColor (existing behavior) to maintain current appearance
-      const playheadColor = isLightTheme ? '#FFFFFF' : fgColor;
 
       // Calculate selected area boundaries early (needed for waveform rendering)
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
@@ -744,7 +725,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           if (phX >= 0 && phX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = playheadColor;
+            ctx.strokeStyle = fgColor;
             ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
             ctx.globalCompositeOperation = prevOp;
@@ -773,7 +754,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           if (ghX >= 0 && ghX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = playheadColor;
+            ctx.strokeStyle = fgColor;
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
             ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
