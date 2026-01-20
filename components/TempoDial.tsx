@@ -186,7 +186,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
         y1={y1}
         x2={x2}
         y2={y2}
-        stroke={isMajor ? '#fff' : 'rgba(255,255,255,0.4)'}
+        stroke={isMajor ? 'var(--color-outline)' : 'color-mix(in srgb, var(--color-outline) 40%, transparent)'}
         strokeWidth={isMajor ? 1.5 : 0.75}
       />
     );
@@ -254,7 +254,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
           cy={CENTER_Y}
           r={OUTER_RADIUS}
           fill="none"
-          stroke={isHovered ? "#fff" : "rgba(255,255,255,0.3)"}
+          stroke={isHovered ? "var(--color-outline)" : "color-mix(in srgb, var(--color-outline) 30%, transparent)"}
           strokeWidth="1"
         />
         
@@ -263,7 +263,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
           cx={CENTER}
           cy={CENTER_Y}
           r={OUTER_RADIUS - 1}
-          fill="#0a0a0a"
+          fill="var(--color-bg)"
         />
         
         {/* Tick marks */}
@@ -272,7 +272,7 @@ const TempoDial: React.FC<TempoDialProps> = ({
         {/* Pointer triangle */}
         <polygon
           points={`${tipX},${tipY} ${base1X},${base1Y} ${base2X},${base2Y}`}
-          fill="#fff"
+          fill="var(--color-fg)"
         />
       </svg>
       
@@ -280,13 +280,14 @@ const TempoDial: React.FC<TempoDialProps> = ({
       <div className="absolute inset-0 pointer-events-none">
         {/* TEMPO label - positioned above center */}
         <span 
-          className="absolute left-1/2 -translate-x-1/2 text-white uppercase"
+          className="absolute left-1/2 -translate-x-1/2 uppercase"
           style={{ 
             top: '23px', // Scaled from 30px
             fontFamily: "'Barlow Condensed', sans-serif",
             fontSize: '10px',
             fontWeight: 500,
             letterSpacing: '0.12em',
+            color: 'var(--color-text)'
           }}
         >
           TEMPO
@@ -302,13 +303,14 @@ const TempoDial: React.FC<TempoDialProps> = ({
         
         {/* BPM label - positioned below center, equal distance */}
         <span 
-          className="absolute left-1/2 -translate-x-1/2 text-white uppercase"
+          className="absolute left-1/2 -translate-x-1/2 uppercase"
           style={{ 
             bottom: '23px', // Scaled from 30px
             fontFamily: "'Barlow Condensed', sans-serif",
             fontSize: '10px',
             fontWeight: 500,
             letterSpacing: '0.12em',
+            color: 'var(--color-text)'
           }}
         >
           BPM
@@ -326,8 +328,8 @@ const TempoDial: React.FC<TempoDialProps> = ({
             bottom: '8px', // Scaled from 10px
             width: '5px', // Scaled from 6px
             height: '5px',
-            backgroundColor: isTapping ? '#fff' : '#333',
-            boxShadow: isTapping ? '0 0 8px 3px rgba(255,255,255,0.9)' : 'none',
+            backgroundColor: isTapping ? 'var(--color-fg)' : 'var(--color-beat-indicator)',
+            boxShadow: isTapping ? '0 0 8px 3px var(--color-fg)' : 'none',
           }}
           title="Tap tempo [T]"
         />

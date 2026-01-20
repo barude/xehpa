@@ -53,20 +53,20 @@ const MiniSegmentCell: React.FC<{ char: string }> = ({ char }) => {
 
   return (
     <svg width={width} height={height} viewBox="0 0 100 150" className="inline-block" style={{ marginRight: '1px' }}>
-      <rect x="15" y="5" width="70" height={sThickness * 10} rx="1" fill={active.includes(0) ? '#FFFFFF' : 'transparent'} />
-      <rect x="83" y="12" width={sThickness * 10} height="58" rx="1" fill={active.includes(1) ? '#FFFFFF' : 'transparent'} />
-      <rect x="83" y="80" width={sThickness * 10} height="58" rx="1" fill={active.includes(2) ? '#FFFFFF' : 'transparent'} />
-      <rect x="15" y="133" width="70" height={sThickness * 10} rx="1" fill={active.includes(3) ? '#FFFFFF' : 'transparent'} />
-      <rect x="5" y="80" width={sThickness * 10} height="58" rx="1" fill={active.includes(4) ? '#FFFFFF' : 'transparent'} />
-      <rect x="5" y="12" width={sThickness * 10} height="58" rx="1" fill={active.includes(5) ? '#FFFFFF' : 'transparent'} />
-      <rect x="15" y="69" width="70" height={sThickness * 10} rx="1" fill={active.includes(6) ? '#FFFFFF' : 'transparent'} />
+      <rect x="15" y="5" width="70" height={sThickness * 10} rx="1" fill={active.includes(0) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="83" y="12" width={sThickness * 10} height="58" rx="1" fill={active.includes(1) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="83" y="80" width={sThickness * 10} height="58" rx="1" fill={active.includes(2) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="15" y="133" width="70" height={sThickness * 10} rx="1" fill={active.includes(3) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="5" y="80" width={sThickness * 10} height="58" rx="1" fill={active.includes(4) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="5" y="12" width={sThickness * 10} height="58" rx="1" fill={active.includes(5) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
+      <rect x="15" y="69" width="70" height={sThickness * 10} rx="1" fill={active.includes(6) ? 'var(--color-segment-active)' : 'var(--color-segment-inactive)'} />
       {char === ':' && (
         <>
-          <rect x="42" y="35" width="16" height="16" fill="#FFFFFF" />
-          <rect x="42" y="95" width="16" height="16" fill="#FFFFFF" />
+          <rect x="42" y="35" width="16" height="16" fill="var(--color-segment-active)" />
+          <rect x="42" y="95" width="16" height="16" fill="var(--color-segment-active)" />
         </>
       )}
-      {char === '.' && <rect x="42" y="130" width="16" height="16" fill="#FFFFFF" />}
+      {char === '.' && <rect x="42" y="130" width="16" height="16" fill="var(--color-segment-active)" />}
     </svg>
   );
 };

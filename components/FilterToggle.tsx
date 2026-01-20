@@ -55,9 +55,9 @@ const FilterToggle: React.FC<FilterToggleProps> = ({ value, onChange, onHover })
   }, [onHover, setHint]);
 
   // Determine colors based on state
-  const backgroundColor = isFlashing ? '#000000' : (isHovered ? '#FFFFFF' : 'transparent');
-  const textColor = isFlashing ? '#FFFFFF' : (isHovered ? '#000000' : '#FFFFFF');
-  const borderColor = '#FFFFFF'; // Always white
+  const backgroundColor = isFlashing ? 'var(--color-active-bg)' : (isHovered ? 'var(--color-hover-bg)' : 'transparent');
+  const textColor = isFlashing ? 'var(--color-active-fg)' : (isHovered ? 'var(--color-hover-fg)' : 'var(--color-text)');
+  const borderColor = 'var(--color-border)';
 
   return (
     <div

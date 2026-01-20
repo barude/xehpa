@@ -58,9 +58,9 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
               width: '96px',
               height: '65px',
               border: 'none',
-              outline: '2px solid #FFFFFF',
+              outline: '2px solid var(--color-outline)',
               outlineOffset: '-1px', // Center-aligned stroke: 1px inside, 1px outside
-              backgroundColor: showHoverStyle ? '#FFFFFF' : '#000000',
+              backgroundColor: showHoverStyle ? 'var(--color-hover-bg)' : 'var(--color-bg)',
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
@@ -79,7 +79,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
                   left: '4px',
                   width: '4px',
                   height: '4px',
-                  backgroundColor: (isActive || showHoverStyle) ? '#000000' : '#FFFFFF',
+                  backgroundColor: (isActive || showHoverStyle) ? 'var(--color-active-fg)' : 'var(--color-indicator)',
                   borderRadius: '50%',
                   pointerEvents: 'none'
                 }}
@@ -100,7 +100,7 @@ const PadGrid: React.FC<PadGridProps> = ({ pads, activePadIds, selectedPadId, on
                 alignItems: 'center',
                 justifyContent: 'center',
                 textAlign: 'center',
-                color: (isActive || showHoverStyle) ? '#000000' : '#FFFFFF',
+                color: (isActive || showHoverStyle) ? 'var(--color-active-fg)' : 'var(--color-text)',
                 textTransform: 'uppercase'
               }}
             >

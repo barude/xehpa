@@ -34,9 +34,47 @@
         @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=BhuTuka+Expanded+One&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Kode+Mono:wght@400&display=swap');
+        
+        /* CSS Custom Properties - Theme System */
+        /* Only --color-bg and --color-fg need to be set per theme */
+        /* All other colors automatically derive from these two */
+        :root {
+            --color-bg: #000000;
+            --color-fg: #FFFFFF;
+            
+            /* Derived colors - automatically calculated from bg and fg */
+            --color-border: var(--color-fg);
+            --color-active-bg: var(--color-fg);
+            --color-active-fg: var(--color-bg);
+            --color-hover-bg: var(--color-fg);
+            --color-hover-fg: var(--color-bg);
+            --color-muted: color-mix(in srgb, var(--color-fg) 60%, var(--color-bg));
+            --color-scrollbar-track: var(--color-bg);
+            --color-scrollbar-thumb: color-mix(in srgb, var(--color-fg) 15%, var(--color-bg));
+            --color-range-track: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg));
+            --color-range-thumb: var(--color-fg);
+            --color-segment-active: var(--color-fg);
+            --color-segment-inactive: color-mix(in srgb, var(--color-bg) 95%, var(--color-fg));
+            
+            /* Additional colors for components */
+            --color-text: var(--color-fg);
+            --color-outline: var(--color-fg);
+            --color-button-bg: var(--color-bg);
+            --color-button-fg: var(--color-fg);
+            --color-button-hover-bg: var(--color-hover-bg);
+            --color-button-hover-fg: var(--color-hover-fg);
+            --color-button-active-bg: var(--color-active-bg);
+            --color-button-active-fg: var(--color-active-fg);
+            --color-indicator: var(--color-fg);
+            --color-grid-line: color-mix(in srgb, var(--color-fg) 5%, var(--color-bg));
+            --color-beat-indicator: color-mix(in srgb, var(--color-fg) 40%, var(--color-bg));
+            --color-downbeat-indicator: color-mix(in srgb, var(--color-fg) 60%, var(--color-bg));
+            --color-disabled-text: #999999;
+        }
+        
         body {
-            background-color: #000000;
-            color: #a1a1aa;
+            background-color: var(--color-bg);
+            color: var(--color-muted);
             margin: 0;
             overflow: hidden;
             font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
@@ -44,17 +82,17 @@
             letter-spacing: -0.02em;
         }
         .pad-active {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
+            background-color: var(--color-active-bg) !important;
+            color: var(--color-active-fg) !important;
         }
         .custom-scrollbar::-webkit-scrollbar {
             width: 2px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-            background: #000000;
+            background: var(--color-scrollbar-track);
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #27272a;
+            background: var(--color-scrollbar-thumb);
         }
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { 
@@ -69,25 +107,25 @@
         }
         input[type=range]::-webkit-slider-runnable-track {
             height: 1px;
-            background: #18181b;
+            background: var(--color-range-track);
         }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
             height: 10px;
             width: 4px;
-            background: #ffffff;
+            background: var(--color-range-thumb);
             margin-top: -4.5px;
             border-radius: 0;
         }
-        /* Segment Display - White */
+        /* Segment Display */
         .segment-active {
-            fill: #FFFFFF;
+            fill: var(--color-segment-active);
         }
         .segment-inactive {
-            fill: #1a0a00;
+            fill: var(--color-segment-inactive);
         }
         .display-bg {
-            background: #000000;
+            background: var(--color-bg);
         }
         * {
             border-radius: 0 !important;
@@ -104,19 +142,19 @@
         .app-wrapper {
             width: 100vw;
             height: 100vh;
-            background: #000000;
+            background: var(--color-bg);
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
             padding: 20px;
             box-sizing: border-box;
+            position: relative;
         }
         .app-frame {
             box-sizing: border-box;
             width: 1288px;
             height: 833px;
-            border: 1px solid #FFFFFF;
             transform-origin: center center;
             position: relative;
         }
@@ -135,21 +173,196 @@
         }
         /* Menu button hover state */
         .menu-button-hover:hover {
-            background: #FFFFFF !important;
-            color: #000000 !important;
+            background: var(--color-hover-bg) !important;
+            color: var(--color-hover-fg) !important;
         }
         /* Pattern button hover state */
         .pattern-button-hover:hover {
-            background: #FFFFFF !important;
-            color: #000000 !important;
+            background: var(--color-hover-bg) !important;
+            color: var(--color-hover-fg) !important;
         }
-        /* Remove focus outline from buttons on mouse click, preserve for keyboard navigation */
-        button:focus:not(:focus-visible) {
+        /* Remove focus outline from buttons */
+        button:focus {
             outline: none;
         }
-        button:focus-visible {
-            outline: 2px solid #3B82F6;
-            outline-offset: 2px;
+        
+        /* Global Color Mappings for elements outside .group/section */
+        /* These ensure buttons and other elements adapt to themes */
+        .border-white {
+            border-color: var(--color-border) !important;
+        }
+        .text-white {
+            color: var(--color-text) !important;
+        }
+        .hover\:bg-white:hover {
+            background-color: var(--color-hover-bg) !important;
+        }
+        .hover\:text-black:hover {
+            color: var(--color-hover-fg) !important;
+        }
+        
+        /* Sample Library Buttons - ensure hover works */
+        .sample-library-container button {
+            transition: none !important;
+        }
+        
+        /* ============================================
+           Arrangement Section - CSS Variable Mappings
+           Maps Tailwind classes to CSS variables for theming
+           ============================================ */
+        
+        /* Base Color Mappings (Default State - Not Selected, Not Hovered) */
+        .group\/section .text-white {
+            color: var(--color-text) !important;
+        }
+        .group\/section .text-black {
+            color: var(--color-active-fg) !important;
+        }
+        .group\/section .bg-white {
+            background-color: var(--color-active-bg) !important;
+        }
+        .group\/section .bg-black {
+            background-color: var(--color-active-fg) !important;
+        }
+        .group\/section .bg-transparent {
+            background-color: transparent !important;
+        }
+        .group\/section .border-white {
+            border-color: var(--color-border) !important;
+        }
+        .group\/section .border-black {
+            border-color: var(--color-active-bg) !important;
+        }
+        .group\/section .fill-white {
+            fill: var(--color-text) !important;
+        }
+        .group\/section .fill-black {
+            fill: var(--color-active-fg) !important;
+        }
+        
+        /* Section Container Specific Rules */
+        .group\/section.bg-white {
+            background-color: var(--color-active-bg) !important;
+        }
+        .group\/section.border-white {
+            border-color: var(--color-border) !important;
+        }
+        .group\/section.hover\:bg-white:hover {
+            background-color: var(--color-hover-bg) !important;
+        }
+        
+        /* Vertical Divider Special Case - uses --color-outline for default white */
+        /* The vertical divider has class "absolute" and uses bg-white by default */
+        /* Target absolute positioned elements that are likely the vertical divider */
+        .group\/section .absolute.bg-white {
+            background-color: var(--color-outline) !important;
+        }
+        .group\/section .absolute.bg-black {
+            background-color: var(--color-active-fg) !important;
+        }
+        
+        /* Group Hover States (Section Hovered, Not Selected) */
+        .group\/section:hover .group-hover\/section\:text-black {
+            color: var(--color-hover-fg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:bg-black {
+            background-color: var(--color-hover-fg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:bg-white {
+            background-color: var(--color-hover-bg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:border-black {
+            border-color: var(--color-hover-fg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:fill-black {
+            fill: var(--color-hover-fg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:fill-white {
+            fill: var(--color-hover-bg) !important;
+        }
+        .group\/section:hover .group-hover\/section\:border-white {
+            border-color: var(--color-hover-bg) !important;
+        }
+        
+        /* Pattern Hover States */
+        .group\/pattern:hover .group-hover\/pattern\:text-white {
+            color: var(--color-text) !important;
+        }
+        
+        /* Button Hover States (Direct Hover on Buttons) */
+        .group\/section .hover\:bg-black:hover {
+            background-color: var(--color-hover-fg) !important;
+        }
+        .group\/section .hover\:bg-white:hover {
+            background-color: var(--color-hover-bg) !important;
+        }
+        .group\/section .hover\:border-black:hover {
+            border-color: var(--color-hover-fg) !important;
+        }
+        /* General hover:text-white - will be overridden by button-specific rules below */
+        .group\/section .hover\:text-white:hover {
+            color: var(--color-text) !important;
+        }
+        .group\/section .hover\:text-black:hover {
+            color: var(--color-hover-fg) !important;
+        }
+        /* Use attribute selector for hover:!text-white since ! needs special handling */
+        .group\/section [class*="hover:!text-white"]:hover {
+            color: var(--color-text) !important;
+        }
+        
+        /* Arm Indicator Border (1.5px border - Tailwind arbitrary value) */
+        .group\/section .border-\[1\.5px\] {
+            border-width: 1.5px !important;
+        }
+        .group\/section .border-\[1\.5px\].border-white {
+            border-color: var(--color-text) !important;
+        }
+        .group\/section .border-\[1\.5px\].border-black {
+            border-color: var(--color-active-fg) !important;
+        }
+        /* Arm indicator border on section hover */
+        .group\/section:hover .group-hover\/section\:border-white {
+            border-color: var(--color-hover-bg) !important;
+        }
+        
+        /* ============================================
+           Special Cases - Color Inversions
+           ============================================ */
+        
+        /* 1. Repeats input box border and expanded section divider in selected sections */
+        /* When selected, border-black should be --color-active-fg (black), not --color-active-bg (white) */
+        /* This applies to repeats input box, expanded section divider, and other border-black elements in selected sections */
+        .group\/section.bg-white .border-black {
+            border-color: var(--color-active-fg) !important;
+        }
+        
+        /* 2. Expanded section divider border in selected sections */
+        /* When section is selected (bg-white), border-black should be --color-active-fg (black) */
+        .group\/section.bg-white .border-t-2.border-black {
+            border-color: var(--color-active-fg) !important;
+        }
+        
+        /* 3. Text of selected pattern within a hovered unselected (but expanded) section */
+        /* When section is hovered (not selected) and pattern is selected (text-black), text should be white */
+        /* This means text-black should become --color-text (white) when section is hovered and not selected */
+        .group\/section:hover:not(.bg-white) .group\/pattern .text-black {
+            color: var(--color-text) !important;
+        }
+        
+        /* 4. Text inside duplicate and delete buttons when they're hovered */
+        /* When button is hovered with hover:bg-black, background becomes var(--color-hover-fg) (black) */
+        /* Text should be the opposite color: var(--color-hover-bg) (white) for contrast */
+        /* Must come after general hover:text-white rule to override it */
+        /* Use maximum specificity to ensure these rules override general hover rules */
+        .group\/section .grid button.hover\:text-white:hover,
+        .group\/section button.hover\:text-white:hover {
+            color: var(--color-hover-bg) !important;
+        }
+        /* Use attribute selector for hover:!text-white since ! needs special handling */
+        .group\/section .grid button[class*="hover:!text-white"]:hover,
+        .group\/section button[class*="hover:!text-white"]:hover {
+            color: var(--color-hover-bg) !important;
         }
     </style>
   <script type="module" src="/index.tsx"></script>

@@ -324,7 +324,7 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ channel, frequencyBand }) => {
   }, [channel, frequencyBand]);
 
   // Number of bar segments per column - fewer, wider bars
-  const NUM_SEGMENTS = 14;
+  const NUM_SEGMENTS = 13;
   const SEGMENT_HEIGHT = 4; // Height of  each segment in pixels
   const SEGMENT_GAP = 4; // Gap between segments in pixels
   const COLUMN_GAP = 4; // Gap between columns in pixels (matches segment gap)
@@ -355,12 +355,12 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ channel, frequencyBand }) => {
 
   const active = getActiveSegments(level);
 
-  // Color segments - inactive bars are black (background), only active bars are white
+  // Color segments - inactive bars use background, only active bars use foreground
   const getSegmentColor = (segmentIndex: number, isActive: boolean): string => {
-    if (!isActive) return '#000000'; // Inactive segments - black background
+    if (!isActive) return 'var(--color-segment-inactive)'; // Inactive segments
     
-    // Active segments - white, reacting to music
-    return '#FFFFFF';
+    // Active segments - foreground color, reacting to music
+    return 'var(--color-segment-active)';
   };
 
   // Calculate total height of the meter

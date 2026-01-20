@@ -51,33 +51,34 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
   }, [onBarsChange]);
 
   // QNT button colors
-  // When flashing: always show transparent bg/white text (inactive visual state)
+  // When flashing: always show transparent bg/foreground text (inactive visual state)
   // This provides consistent visual feedback regardless of hover or active state
   const qntBackgroundColor = isQntFlashing 
     ? 'transparent'
-    : (isQntHovered ? 'white' : (isQuantizeActive ? 'white' : 'transparent'));
+    : (isQntHovered ? 'var(--color-hover-bg)' : (isQuantizeActive ? 'var(--color-active-bg)' : 'transparent'));
   
   const qntTextColor = isQntFlashing
-    ? 'white'
-    : (isQntHovered ? 'black' : (isQuantizeActive ? 'black' : 'white'));
+    ? 'var(--color-text)'
+    : (isQntHovered ? 'var(--color-hover-fg)' : (isQuantizeActive ? 'var(--color-active-fg)' : 'var(--color-text)'));
 
-  // BARS button colors (default is white bg/black text, flash to transparent bg/white text)
+  // BARS button colors (default is active bg/active fg, flash to transparent bg/foreground text)
   const barsBackgroundColor = isBarsFlashing
     ? 'transparent'
-    : (isBarsHovered ? 'white' : 'white');
+    : (isBarsHovered ? 'var(--color-hover-bg)' : 'var(--color-active-bg)');
   
   const barsTextColor = isBarsFlashing
-    ? 'white'
-    : (isBarsHovered ? 'black' : 'black');
+    ? 'var(--color-text)'
+    : (isBarsHovered ? 'var(--color-hover-fg)' : 'var(--color-active-fg)');
 
-  const barsBorderColor = isBarsFlashing ? '1px solid white' : 'none';
+  const barsBorderColor = isBarsFlashing ? '1px solid var(--color-border)' : 'none';
 
   return (
     <div className="flex flex-col items-center" style={{ width: BUTTON_SIZE }}>
       {/* QNT Section */}
       <span
-        className="text-white uppercase text-center"
+        className="uppercase text-center"
         style={{
+          color: 'var(--color-text)',
           fontFamily: "'Barlow Condensed', sans-serif",
           fontSize: '10px',
           lineHeight: '12px',
@@ -108,7 +109,7 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
           padding: 0,
           borderRadius: '50%',
           backgroundColor: qntBackgroundColor,
-          border: '1px solid white',
+          border: '1px solid var(--color-border)',
           boxSizing: 'border-box',
         }}
       >
@@ -128,8 +129,9 @@ const QntBarsOverlay: React.FC<QntBarsOverlayProps> = ({
 
       {/* BARS Label - 12px below QNT button */}
       <span
-        className="text-white uppercase text-center"
+        className="uppercase text-center"
         style={{
+          color: 'var(--color-text)',
           marginTop: '12px',
           fontFamily: "'Barlow Condensed', sans-serif",
           fontSize: '10px',

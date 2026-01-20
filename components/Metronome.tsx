@@ -119,7 +119,7 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
         y1={y1}
         x2={x2}
         y2={y2}
-        stroke="white"
+        stroke="var(--color-outline)"
         strokeWidth="2"
         strokeLinecap="round"
       />
@@ -149,7 +149,7 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
           y1={PIVOT_Y}
           x2={armEndX}
           y2={armEndY}
-          stroke="white"
+          stroke="var(--color-outline)"
           strokeWidth="2"
           strokeLinecap="round"
         />
@@ -159,8 +159,8 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
           cx={weightX}
           cy={weightY}
           r={WEIGHT_RADIUS}
-          fill="black"
-          stroke="white"
+          fill="var(--color-fg)"
+          stroke="var(--color-outline)"
           strokeWidth="1"
         />
 
@@ -170,16 +170,16 @@ const Metronome: React.FC<MetronomeProps> = ({ tempo, isEnabled, isPlaying, onTo
           y={BUTTON_Y}
           width={BUTTON_WIDTH}
           height={BUTTON_HEIGHT}
-          stroke="white"
+          stroke="var(--color-outline)"
           strokeWidth="2"
-          fill={isEnabled ? 'white' : 'none'}
+          fill={isEnabled ? 'var(--color-active-bg)' : 'none'}
         />
 
         {/* METRO text */}
         <text
           x={PIVOT_X}
           y={BUTTON_Y + BUTTON_HEIGHT / 2 + 1}
-          fill={isEnabled ? 'black' : 'white'}
+          fill={isEnabled ? 'var(--color-active-fg)' : 'var(--color-text)'}
           fontSize="10"
           fontFamily="'Barlow Condensed', sans-serif"
           fontWeight="500"

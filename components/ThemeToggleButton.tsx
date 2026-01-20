@@ -1,39 +1,35 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useHint } from './HintDisplay';
+import { Theme } from '../App';
 
-interface SongModeOverlayProps {
-  isSongMode: boolean;
-  onToggle: () => void;
+interface ThemeToggleButtonProps {
+  theme: Theme;
+  onThemeToggle: () => void;
 }
 
 // Component dimensions
 const BUTTON_SIZE = 29;
 
-const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
-  isSongMode,
-  onToggle,
+const ThemeToggleButton: React.FC<ThemeToggleButtonProps> = ({
+  theme,
+  onThemeToggle,
 }) => {
   const { setHint } = useHint();
   const [isHovered, setIsHovered] = useState(false);
   const [isFlashing, setIsFlashing] = useState(false);
-  const flashingToStateRef = useRef<boolean | null>(null);
 
   const handleClick = useCallback(() => {
-    // Remember the state BEFORE toggle (this is what we'll flash to)
-    const stateBeforeToggle = isSongMode;
-    flashingToStateRef.current = stateBeforeToggle;
-    onToggle();
-    // Flash to the state before toggle
+    onThemeToggle();
+    // Flash to default state (transparent bg, white text)
     setIsFlashing(true);
     setTimeout(() => {
       setIsFlashing(false);
-      flashingToStateRef.current = null;
     }, 150);
-  }, [isSongMode, onToggle]);
+  }, [onThemeToggle]);
 
   const handleMouseEnter = useCallback(() => {
     setIsHovered(true);
-    setHint('SONG MODE: TOGGLE [ALT+CMD]');
+    setHint('THEME: TOGGLE [CMD+I]');
   }, [setHint]);
 
   const handleMouseLeave = useCallback(() => {
@@ -41,24 +37,20 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
     setHint(null);
   }, [setHint]);
 
-  // Determine colors based on state
-  // When flashing: always show transparent bg/foreground text (inactive visual state)
-  // This provides consistent visual feedback regardless of hover or active state
-  // When not flashing and hovered: hover bg, hover fg
-  // When not flashing and not hovered: default state based on isSongMode
-  const backgroundColor = isFlashing 
+  // THEME button colors (default is active bg/active fg, flash to transparent bg/foreground text)
+  const backgroundColor = isFlashing
     ? 'transparent'
-    : (isHovered ? 'var(--color-hover-bg)' : (isSongMode ? 'var(--color-active-bg)' : 'transparent'));
+    : (isHovered ? 'var(--color-hover-bg)' : 'var(--color-active-bg)');
   
   const textColor = isFlashing
     ? 'var(--color-text)'
-    : (isHovered ? 'var(--color-hover-fg)' : (isSongMode ? 'var(--color-active-fg)' : 'var(--color-text)'));
+    : (isHovered ? 'var(--color-hover-fg)' : 'var(--color-active-fg)');
 
-  const borderColor = 'var(--color-border)';
+  const borderColor = isFlashing ? '1px solid var(--color-border)' : 'none';
 
   return (
     <div className="flex flex-col items-center" style={{ width: BUTTON_SIZE }}>
-      {/* SONG Label */}
+      {/* THEME Label */}
       <span
         className="uppercase text-center"
         style={{
@@ -69,10 +61,10 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
           fontWeight: 500,
         }}
       >
-        SONG
+        THEME
       </span>
       
-      {/* SONG Toggle Button - 6px below label */}
+      {/* THEME Toggle Button - 6px below label */}
       <button
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
@@ -87,7 +79,7 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
           padding: 0,
           borderRadius: '50%',
           backgroundColor,
-          border: `1px solid ${borderColor}`,
+          border: borderColor,
           boxSizing: 'border-box',
         }}
       >
@@ -101,11 +93,11 @@ const SongModeOverlay: React.FC<SongModeOverlayProps> = ({
             textAlign: 'center',
           }}
         >
-          {isSongMode ? 'ON' : 'OFF'}
+          {theme.slice(0, 3).toUpperCase()}
         </span>
       </button>
     </div>
   );
 };
 
-export default SongModeOverlay;
+export default ThemeToggleButton;

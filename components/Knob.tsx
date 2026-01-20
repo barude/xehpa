@@ -266,7 +266,7 @@ const Knob: React.FC<KnobProps> = ({
     fontSize: '13px',
     lineHeight: '16px',
     fontWeight: 500,
-    color: '#FFFFFF',
+    color: 'var(--color-text)',
     textTransform: 'uppercase',
     position: 'absolute',
     whiteSpace: 'nowrap',
@@ -321,8 +321,8 @@ const Knob: React.FC<KnobProps> = ({
             cx={center}
             cy={center}
             r={center - strokeWidth}
-            fill={showActiveState ? '#FFFFFF' : 'transparent'}
-            stroke="#FFFFFF"
+            fill={showActiveState ? 'var(--color-active-bg)' : 'transparent'}
+            stroke="var(--color-outline)"
             strokeWidth={strokeWidth}
             style={{ transition: 'fill 0.1s ease' }}
           />
@@ -332,7 +332,7 @@ const Knob: React.FC<KnobProps> = ({
             y1={center}
             x2={lineEndX}
             y2={lineEndY}
-            stroke={showActiveState ? '#000000' : '#FFFFFF'}
+            stroke={showActiveState ? 'var(--color-active-fg)' : 'var(--color-outline)'}
             strokeWidth={strokeWidth}
             strokeLinecap="round"
             style={{ transition: 'stroke 0.1s ease' }}

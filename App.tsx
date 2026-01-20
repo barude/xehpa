@@ -11,6 +11,7 @@ import TempoDial from './components/TempoDial';
 import Metronome from './components/Metronome';
 import QntBarsOverlay from './components/QntBarsOverlay';
 import SongModeOverlay from './components/SongModeOverlay';
+import ThemeToggleButton from './components/ThemeToggleButton';
 import EffectsPanel from './components/EffectsPanel';
 import SongBankOverlay from './components/SongBankOverlay';
 import PadBankOverlay from './components/PadBankOverlay';
@@ -28,6 +29,38 @@ import { formatTimeForDisplay } from './utils/formatting';
 import { TEMPO_MIN, TEMPO_MAX, TEMPO_DEFAULT, PADS_PER_BANK, MAX_PADS, MAX_ARRANGEMENT_BANKS, DEFAULT_PATTERN_BARS, BEATS_PER_BAR, BANK_LETTERS, PATTERN_BAR_OPTIONS, MAX_HITS_PER_PATTERN } from './constants';
 import loadJSZip from './services/jszip-shim';
 import { showError, showWarning } from './utils/errors';
+
+// Theme definitions
+export type Theme = 'blk' | 'inv' | 'amb' | 'prp' | 'neo' | 'sky' | 'red' | 'hzd' | 'blu' | 'arc';
+
+const THEMES: Theme[] = ['blk', 'inv', 'amb', 'prp', 'neo', 'sky', 'red', 'hzd', 'blu', 'arc'];
+
+const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
+  switch (theme) {
+    case 'blk':
+      return { bg: '#0A0908', fg: '#F0EDEE' };
+    case 'inv':
+      return { bg: '#F2F4F3', fg: '#0A0908' };
+    case 'amb':
+      return { bg: '#0A0908', fg: '#EEC643' };
+    case 'prp':
+      return { bg: '#6E2594', fg: '#ECD444' };
+    case 'neo':
+      return { bg: '#0A100D', fg: '#5CF64A' };
+    case 'sky':
+      return { bg: '#F8FFE5', fg: '#2BA9FD' };
+    case 'red':
+      return { bg: '#0A0908', fg: '#EA2B1F' };
+    case 'hzd':
+      return { bg: '#FABC3C', fg: '#EA2B1F' };
+    case 'blu':
+      return { bg: '#29339B', fg: '#FBFEF9' };
+    case 'arc':
+      return { bg: '#EDEEC0', fg: '#433E0E' };
+    default:
+      return { bg: '#0A0908', fg: '#F0EDEE' };
+  }
+};
 
 const INITIAL_PATTERN: Pattern = {
   id: randomUUID(),
@@ -96,6 +129,10 @@ export default function App() {
   const [currentPass, setCurrentPass] = useState(0);
   const [currentSongTime, setCurrentSongTime] = useState(0);
   const [frameScale, setFrameScale] = useState(1);
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = safeLocalStorageGet<string>('bpc_theme', 'blk');
+    return THEMES.includes(saved as Theme) ? (saved as Theme) : 'blk';
+  });
 
   // Drag and Drop State
   const [draggedStepIdx, setDraggedStepIdx] = useState<number | null>(null);
@@ -155,6 +192,20 @@ export default function App() {
   useEffect(() => { currentSongStepIdxRef.current = currentSongStepIdx; }, [currentSongStepIdx]);
   useEffect(() => { tempoRef.current = tempo; }, [tempo]);
   useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
+
+  // Apply theme colors via CSS custom properties
+  // Only need to set 2 base colors - all other colors derive automatically
+  useEffect(() => {
+    const colors = getThemeColors(theme);
+    const root = document.documentElement;
+    
+    // Set base colors
+    root.style.setProperty('--color-bg', colors.bg);
+    root.style.setProperty('--color-fg', colors.fg);
+    
+    // All other colors are automatically derived via CSS color-mix() in the stylesheet
+    // No need to manually calculate or set them here!
+  }, [theme]);
 
   // Debounced localStorage writes to prevent quota errors
   const debouncedSavePads = useMemo(() => createDebouncedLocalStorageWrite('bpc_pads_v8', 300), []);
@@ -628,6 +679,16 @@ export default function App() {
     activePadTimeoutRefs.current.set(padId, timeoutId);
   }, [currentPass, quantizeMode, killAllAudio, stopPreview, stopRegularPadPlayback]);
 
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const currentIndex = THEMES.indexOf(prev);
+      const nextIndex = (currentIndex + 1) % THEMES.length;
+      const nextTheme = THEMES[nextIndex];
+      safeLocalStorageSet('bpc_theme', nextTheme);
+      return nextTheme;
+    });
+  }, []);
+
   const toggleTransportRef = useRef<() => void>(() => {});
 
   const scheduler = useCallback(() => {
@@ -679,8 +740,8 @@ export default function App() {
         beatIndicatorRefs.current.forEach((ref, idx) => {
             if (!ref) return;
             const isDownbeat = idx % BEATS_PER_BAR === 0;
-            if (idx === exactVisualBeat) ref.style.backgroundColor = '#FFFFFF';
-            else ref.style.backgroundColor = isDownbeat ? '#666666' : '#444444';
+            if (idx === exactVisualBeat) ref.style.backgroundColor = 'var(--color-fg)';
+            else ref.style.backgroundColor = isDownbeat ? 'var(--color-downbeat-indicator)' : 'var(--color-beat-indicator)';
         });
     }
 
@@ -859,7 +920,7 @@ export default function App() {
       lastVisualBeatRef.current = -1;
       beatIndicatorRefs.current.forEach((ref, idx) => {
           if (!ref) return;
-          ref.style.backgroundColor = idx % 4 === 0 ? '#666666' : '#444444';
+          ref.style.backgroundColor = idx % 4 === 0 ? 'var(--color-downbeat-indicator)' : 'var(--color-beat-indicator)';
       });
       if (progressBarRef.current) progressBarRef.current.style.width = '0%';
       // Release wake lock when stopped
@@ -1085,7 +1146,7 @@ export default function App() {
     if (progressBarRef.current) progressBarRef.current.style.width = '0%';
     beatIndicatorRefs.current.forEach((ref, idx) => {
       if (!ref) return;
-      ref.style.backgroundColor = idx % 4 === 0 ? '#666666' : '#444444';
+      ref.style.backgroundColor = idx % 4 === 0 ? 'var(--color-downbeat-indicator)' : 'var(--color-beat-indicator)';
     });
 
     // Clear localStorage
@@ -1471,10 +1532,16 @@ export default function App() {
         const maxBanks = Math.min(Math.floor(padsRef.current.length / PADS_PER_BANK), MAX_ARRANGEMENT_BANKS);
         if (num >= 0 && num < maxBanks) setActiveBankIdx(num);
       }
+      
+      // Theme toggle with Cmd+I (Mac) or Ctrl+I (Windows/Linux) - cycles through themes
+      if (e.code === 'KeyI' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        toggleTheme();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap, selectedPadId, stopPreview, setSelectedPadId, setSelectedSampleId]);
+  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap, selectedPadId, stopPreview, setSelectedPadId, setSelectedSampleId, toggleTheme]);
 
   // Audio analysis for reactive visuals - runs continuously to react to ALL audio
   // Blur buttons after mouse click to prevent spacebar from triggering them
@@ -1594,6 +1661,7 @@ export default function App() {
         toggleTransport={toggleTransport}
         toggleRecord={toggleRecord}
         isSongMode={isSongMode}
+        theme={theme}
         currentStep={currentStep}
         activePattern={activePattern}
         currentSongTime={currentSongTime}
@@ -1672,6 +1740,7 @@ export default function App() {
         importProgress={importProgress}
         setImportProgress={setImportProgress}
         processBatchImport={processBatchImport}
+        toggleTheme={toggleTheme}
       />
     </HintProvider>
   );
@@ -1761,16 +1830,21 @@ const AppContent: React.FC<{
   importProgress: { current: number; total: number } | null;
   setImportProgress: (progress: { current: number; total: number } | null) => void;
   processBatchImport: (files: File[], existingSamples: SampleData[], onProgress: (current: number, total: number) => void) => Promise<{ results: SampleData[]; errors: string[]; skipped: string[] }>;
+  theme: Theme;
+  toggleTheme: () => void;
 }> = (props) => {
   const { setHint } = useHint();
 
   return (
-    <div className="app-wrapper">
+    <div 
+      className="app-wrapper"
+      data-theme={props.theme}
+    >
       <div 
         className="app-frame"
           style={{ transform: `scale(${props.frameScale})` }}
       >
-        <div className="app-content relative flex h-full overflow-hidden bg-black text-[#4a4a4a] font-mono">
+        <div className="app-content relative flex h-full overflow-hidden font-mono" style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-muted)' }}>
       {/* Dividers - reactive spectrum bars that respond to audio */}
       <Dividers />
       
@@ -1782,8 +1856,8 @@ const AppContent: React.FC<{
             left: '50%',
             transform: 'translate(-50%, -50%)',
             zIndex: 1000,
-            backgroundColor: '#000000',
-            border: '2px solid #FFFFFF',
+            backgroundColor: 'var(--color-bg)',
+            border: '2px solid var(--color-border)',
             padding: '20px 30px',
             display: 'flex',
             flexDirection: 'column',
@@ -1796,7 +1870,7 @@ const AppContent: React.FC<{
               fontFamily: 'Barlow Condensed',
               fontSize: '12px',
               fontWeight: 500,
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
               textTransform: 'uppercase',
               letterSpacing: '0.1em',
               margin: 0
@@ -1808,7 +1882,7 @@ const AppContent: React.FC<{
             style={{
               width: '200px',
               height: '2px',
-              backgroundColor: '#27272a',
+              backgroundColor: 'var(--color-scrollbar-thumb)',
               overflow: 'hidden'
             }}
           >
@@ -1816,7 +1890,7 @@ const AppContent: React.FC<{
               style={{
                 width: '100%',
                 height: '100%',
-                backgroundColor: '#FFFFFF'
+                backgroundColor: 'var(--color-fg)'
               }}
             />
           </div>
@@ -1832,8 +1906,8 @@ const AppContent: React.FC<{
             left: '50%',
             transform: 'translate(-50%, -50%)',
             zIndex: 1000,
-            backgroundColor: '#000000',
-            border: '2px solid #FFFFFF',
+            backgroundColor: 'var(--color-bg)',
+            border: '2px solid var(--color-border)',
             padding: '20px 30px',
             display: 'flex',
             flexDirection: 'column',
@@ -1846,7 +1920,7 @@ const AppContent: React.FC<{
               fontFamily: 'Barlow Condensed',
               fontSize: '12px',
               fontWeight: 500,
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
               textTransform: 'uppercase',
               letterSpacing: '0.1em',
               margin: 0
@@ -1858,7 +1932,7 @@ const AppContent: React.FC<{
             style={{
               width: '200px',
               height: '2px',
-              backgroundColor: '#27272a',
+              backgroundColor: 'var(--color-scrollbar-thumb)',
               overflow: 'hidden'
             }}
           >
@@ -1866,7 +1940,7 @@ const AppContent: React.FC<{
               style={{
                 width: `${(props.importProgress.current / props.importProgress.total) * 100}%`,
                 height: '100%',
-                backgroundColor: '#FFFFFF',
+                backgroundColor: 'var(--color-fg)',
                 transition: 'width 0.2s ease-out'
               }}
             />
@@ -1887,6 +1961,11 @@ const AppContent: React.FC<{
             props.setPatterns(prev => prev.map(p => p.id === props.currentPatternId ? { ...p, bars: nextBars } : p));
           }}
         />
+      </div>
+      
+      {/* THEME Overlay - positioned horizontally aligned with QNT (top: 65px), vertically aligned with SONG (left: 371px) */}
+      <div className="absolute z-10" style={{ top: '65px', left: '371px' }}>
+        <ThemeToggleButton theme={props.theme} onThemeToggle={props.toggleTheme} />
       </div>
       
       {/* SONG Mode Overlay - positioned over grid lines (left side), aligned with BARS button */}
@@ -1915,7 +1994,7 @@ const AppContent: React.FC<{
               fontSize: '10px',
               lineHeight: '13px',
               letterSpacing: '0.05em',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
           >
             A PRODUCTION SAMPLER DESIGNED BY BARÜDE
@@ -1931,7 +2010,7 @@ const AppContent: React.FC<{
               fontWeight: 400,
               fontSize: '50px',
               lineHeight: '50px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
           >
             XEHPA
@@ -1950,7 +2029,7 @@ const AppContent: React.FC<{
               fontWeight: 500,
               fontSize: '10px',
               lineHeight: '12px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
             className="hover:opacity-60 transition-opacity"
           >
@@ -1968,7 +2047,7 @@ const AppContent: React.FC<{
               fontWeight: 500,
               fontSize: '10px',
               lineHeight: '12px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
             className="hover:opacity-60 transition-opacity"
           >
@@ -1985,7 +2064,7 @@ const AppContent: React.FC<{
               fontWeight: 500,
               fontSize: '10px',
               lineHeight: '12px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
             className="hover:opacity-60 transition-opacity cursor-pointer"
           >
@@ -2007,7 +2086,7 @@ const AppContent: React.FC<{
               fontWeight: 500,
               fontSize: '10px',
               lineHeight: '12px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
             className="hover:opacity-60 transition-opacity"
           >
@@ -2045,7 +2124,7 @@ const AppContent: React.FC<{
               fontWeight: 500,
               fontSize: '10px',
               lineHeight: '12px',
-              color: '#FFFFFF',
+              color: 'var(--color-text)',
             }}
             className={`flex items-center gap-1 ${props.isExportingStems ? 'opacity-40 cursor-wait' : 'hover:opacity-60 transition-opacity'}`}
           >
@@ -2083,17 +2162,24 @@ const AppContent: React.FC<{
                 return (
                   <div key={step.id} className="relative">
                     {props.dropIndicatorIdx === idx && props.draggedStepIdx !== null && (
-                      <div className="h-0.5 bg-white w-full absolute top-0 left-0 z-10" />
+                      <div className="h-0.5 w-full absolute top-0 left-0 z-10" style={{ backgroundColor: isSelected ? 'var(--color-active-fg)' : 'var(--color-outline)' }} />
                     )}
                     
                     <div 
                       className={`relative border-2 transition-none ${isSelected ? 'bg-white border-white' : 'border-white bg-transparent hover:bg-white'} ${props.draggedStepIdx === idx ? 'opacity-30' : 'opacity-100'} group/section`}
-                      style={{ marginTop: idx === 0 ? 0 : 5, minHeight: isExpanded ? 'auto' : 35 }}
+                      style={{ 
+                        marginTop: idx === 0 ? 0 : 5, 
+                        minHeight: isExpanded ? 'auto' : 35
+                      }}
                     >
                       {/* Vertical divider line - spans from top border to horizontal divider */}
                       <div 
-                        className={`absolute w-[2px] ${isSelected ? 'bg-black' : 'bg-white group-hover/section:bg-black'}`} 
-                        style={{ right: '42px', top: '-2px', height: '35px' }} 
+                        className={`absolute w-[2px] ${isSelected ? 'bg-black' : 'bg-white group-hover/section:bg-black'}`}
+                        style={{ 
+                          right: '42px', 
+                          top: '-2px', 
+                          height: '35px'
+                        }}
                       />
                       
                       <div 
@@ -2133,7 +2219,10 @@ const AppContent: React.FC<{
                           }
                         }}
                       >
-                        <span className={`w-4 text-center font-light text-[6px] ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} style={{ fontFamily: 'Barlow Condensed' }}>
+                        <span 
+                          className={`w-4 text-center font-light text-[6px] ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
+                          style={{ fontFamily: 'Barlow Condensed' }}
+                        >
                           {idx + 1}
                         </span>
                         
@@ -2156,7 +2245,7 @@ const AppContent: React.FC<{
                             />
                           ) : (
                             <span 
-                              className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`} 
+                              className={`text-[10px] uppercase truncate block font-medium ${isSelected ? 'text-black' : 'text-white group-hover/section:text-black'}`}
                               style={{ 
                                 fontFamily: 'Barlow Condensed',
                                 maxWidth: '100%',
@@ -2227,7 +2316,13 @@ const AppContent: React.FC<{
             </div>
             
                       {isExpanded && (
-                        <div className={`border-t-2 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black group-hover/section:bg-white'}`} style={{ width: 'calc(100% + 4px)', marginLeft: '-2px' }}>
+                        <div 
+                          className={`border-t-2 ${isSelected ? 'border-black' : 'border-white group-hover/section:border-black group-hover/section:bg-white'}`}
+                          style={{ 
+                            width: 'calc(100% + 4px)', 
+                            marginLeft: '-2px'
+                          }}
+                        >
                           <div className="px-[16px] pt-[18px] pb-[2px] max-h-[78px] overflow-y-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                             <div className="grid grid-cols-2 gap-x-[10px] gap-y-[2px]">
                               {props.patterns.map(p => {
@@ -2237,7 +2332,10 @@ const AppContent: React.FC<{
                                 return (
                                   <div 
                                     key={p.id}
-                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black') : isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-black hover:border-black group-hover/section:border-black'}`}
+                                    className={`h-[18px] border-2 flex items-center justify-between px-[8px] cursor-pointer transition-none relative group/pattern ${isActive 
+                                      ? (isSelected ? 'bg-black border-black' : 'bg-white border-white group-hover/section:bg-black group-hover/section:border-black')
+                                      : (isSelected ? 'bg-transparent border-black hover:bg-black' : 'bg-transparent border-white hover:bg-black hover:border-black group-hover/section:border-black')
+                                    }`}
                                     onMouseEnter={() => setHint(`PATTERN: ${p.name} · ${isActive ? 'REMOVE FROM SECTION' : 'ADD TO SECTION'}`)}
                                     onMouseLeave={() => setHint(null)}
                                     onClick={() => {
@@ -2253,14 +2351,20 @@ const AppContent: React.FC<{
                                     }}
                                   >
                                     <span 
-                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive ? (isSelected ? 'text-white' : 'text-black group-hover/section:text-white') : isSelected ? 'text-black group-hover/pattern:text-white' : 'text-white group-hover/section:text-black group-hover/pattern:text-white'}`}
+                                      className={`text-[10px] uppercase font-medium truncate leading-none ${isActive 
+                                        ? (isSelected ? 'text-white' : 'text-black group-hover/section:text-white')
+                                        : (isSelected ? 'text-black group-hover/pattern:text-white' : 'text-white group-hover/section:text-black group-hover/pattern:text-white')
+                                      }`}
                                       style={{ fontFamily: 'Barlow Condensed' }}
                                     >
                                       {p.name}
                                     </span>
                                     {isActive && (
                                       <div 
-                                        className={`w-[8px] h-[8px] rounded-full flex-shrink-0 cursor-pointer ${isArmed ? (isSelected ? 'bg-white' : 'bg-black group-hover/section:bg-white') : (isSelected ? 'border-[1.5px] border-white bg-transparent' : 'border-[1.5px] border-black bg-transparent group-hover/section:border-white')}`}
+                                        className={`w-[8px] h-[8px] rounded-full flex-shrink-0 cursor-pointer ${isArmed 
+                                          ? (isSelected ? 'bg-white' : 'bg-black group-hover/section:bg-white')
+                                          : (isSelected ? 'border-[1.5px] border-white bg-transparent' : 'border-[1.5px] border-black bg-transparent group-hover/section:border-white')
+                                        }`}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           props.setArrangementBanks(prev => prev.map((arr, i) => i === props.activeArrIdx ? arr.map(s => s.id === step.id ? { ...s, armedPatternId: p.id } : s) : arr));
@@ -2282,8 +2386,14 @@ const AppContent: React.FC<{
                               }}
                               onMouseEnter={() => setHint('DUPLICATE SECTION')}
                               onMouseLeave={() => setHint(null)}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'}`}
-                              style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected 
+                                ? 'border-black text-black hover:bg-black hover:text-white'
+                                : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'
+                              }`}
+                              style={{ 
+                                fontFamily: 'Barlow Condensed', 
+                                fontSize: '10px'
+                              }}
                             >
                               DUPLICATE
                             </button>
@@ -2299,8 +2409,14 @@ const AppContent: React.FC<{
                               }}
                               onMouseEnter={() => setHint('DELETE SECTION')}
                               onMouseLeave={() => setHint(null)}
-                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected ? 'border-black text-black hover:bg-black hover:text-white' : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'}`}
-                              style={{ fontFamily: 'Barlow Condensed', fontSize: '10px' }}
+                              className={`h-[18px] border-2 uppercase font-medium transition-none flex items-center justify-center ${isSelected 
+                                ? 'border-black text-black hover:bg-black hover:text-white'
+                                : 'border-white text-white hover:bg-black hover:border-black hover:!text-white group-hover/section:border-black group-hover/section:text-black'
+                              }`}
+                              style={{ 
+                                fontFamily: 'Barlow Condensed', 
+                                fontSize: '10px'
+                              }}
                             >
                               DELETE
                             </button>
@@ -2310,7 +2426,7 @@ const AppContent: React.FC<{
                   </div>
                     
                     {idx === props.currentArrangement.length - 1 && props.dropIndicatorIdx === props.currentArrangement.length && props.draggedStepIdx !== null && (
-                      <div className="h-0.5 bg-white w-full mt-1" />
+                      <div className="h-0.5 w-full mt-1" style={{ backgroundColor: 'var(--color-outline)' }} />
                     )}
               </div>
                 );
@@ -2320,8 +2436,11 @@ const AppContent: React.FC<{
                 onClick={props.addSongStep} 
                 onMouseEnter={() => setHint('ADD SECTION TO SONG')}
                 onMouseLeave={() => setHint(null)}
-                className="h-[22px] border-2 border-dashed border-white text-[10px] text-white uppercase font-medium hover:bg-white hover:text-black transition-none mt-[8px] flex items-center justify-center"
-                style={{ fontFamily: 'Barlow Condensed' }}
+                className="h-[22px] border-2 border-dashed uppercase font-medium transition-none mt-[8px] flex items-center justify-center border-white text-white hover:bg-white hover:text-black"
+                style={{ 
+                  fontFamily: 'Barlow Condensed', 
+                  fontSize: '10px'
+                }}
               >
                 NEW SECTION
               </button>
@@ -2338,7 +2457,7 @@ const AppContent: React.FC<{
                left: '29px',
                width: '313px',
                height: '11px',
-               border: '2px solid #FFFFFF',
+               border: '2px solid var(--color-border)',
                boxSizing: 'content-box', // Stroke alignment: outside
                display: 'flex'
              }}>
@@ -2349,7 +2468,7 @@ const AppContent: React.FC<{
                  top: 0,
                  width: '2px',
                  height: '100%',
-                 background: '#FFFFFF'
+                 background: 'var(--color-fg)'
                }} />
                <div style={{
                  position: 'absolute',
@@ -2357,7 +2476,7 @@ const AppContent: React.FC<{
                  top: 0,
                  width: '2px',
                  height: '100%',
-                 background: '#FFFFFF'
+                 background: 'var(--color-fg)'
                }} />
                
                {/* Button areas */}
@@ -2381,7 +2500,7 @@ const AppContent: React.FC<{
                    fontWeight: 500,
                    fontSize: '10px',
                    lineHeight: '12px',
-                   color: '#FFFFFF',
+                   color: 'var(--color-text)',
                    transition: 'none'
                  }}
                >
@@ -2407,7 +2526,7 @@ const AppContent: React.FC<{
                    fontWeight: 500,
                    fontSize: '10px',
                    lineHeight: '12px',
-                   color: '#FFFFFF',
+                   color: 'var(--color-text)',
                    transition: 'none'
                  }}
                >
@@ -2433,7 +2552,7 @@ const AppContent: React.FC<{
                    fontWeight: 500,
                    fontSize: '10px',
                    lineHeight: '12px',
-                   color: '#FFFFFF',
+                   color: 'var(--color-text)',
                    transition: 'none'
                  }}
                >
@@ -2457,7 +2576,7 @@ const AppContent: React.FC<{
                  top: '0px',
                  width: '2px',
                  height: '180px',
-                 background: '#FFFFFF',
+                 background: 'var(--color-fg)',
                  zIndex: 2,
                  pointerEvents: 'none'
                }}>
@@ -2468,7 +2587,7 @@ const AppContent: React.FC<{
                    top: '0px',
                    width: '5px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                  {/* Bottom accent - 5px extending right from divider */}
                  <div style={{
@@ -2477,7 +2596,7 @@ const AppContent: React.FC<{
                    bottom: '0px',
                    width: '5px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
              </div>
                {/* Divider between column 1 and 2 - 8px accent centered */}
@@ -2487,7 +2606,7 @@ const AppContent: React.FC<{
                  top: '0px',
                  width: '2px',
                  height: '180px',
-                 background: '#FFFFFF',
+                 background: 'var(--color-fg)',
                  zIndex: 2,
                  pointerEvents: 'none'
                }}>
@@ -2498,7 +2617,7 @@ const AppContent: React.FC<{
                    top: '0px',
                    width: '8px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                  {/* Bottom accent - 8px centered on 2px divider */}
                  <div style={{
@@ -2507,7 +2626,7 @@ const AppContent: React.FC<{
                    bottom: '0px',
                    width: '8px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                </div>
                {/* Divider between column 2 and 3 - 8px accent centered */}
@@ -2517,7 +2636,7 @@ const AppContent: React.FC<{
                  top: '0px',
                  width: '2px',
                  height: '180px',
-                 background: '#FFFFFF',
+                 background: 'var(--color-fg)',
                  zIndex: 2,
                  pointerEvents: 'none'
                }}>
@@ -2528,7 +2647,7 @@ const AppContent: React.FC<{
                    top: '0px',
                    width: '8px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                  {/* Bottom accent - 8px centered on 2px divider */}
                  <div style={{
@@ -2537,7 +2656,7 @@ const AppContent: React.FC<{
                    bottom: '0px',
                    width: '8px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                </div>
                {/* Right edge line - accents extend inward (left) */}
@@ -2547,7 +2666,7 @@ const AppContent: React.FC<{
                  top: '0px',
                  width: '2px',
                  height: '180px',
-                 background: '#FFFFFF',
+                 background: 'var(--color-fg)',
                  zIndex: 2,
                  pointerEvents: 'none'
                }}>
@@ -2558,7 +2677,7 @@ const AppContent: React.FC<{
                    top: '0px',
                    width: '5px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                  {/* Bottom accent - 5px extending left from divider */}
                  <div style={{
@@ -2567,7 +2686,7 @@ const AppContent: React.FC<{
                    bottom: '0px',
                    width: '5px',
                    height: '2px',
-                   background: '#FFFFFF'
+                   background: 'var(--color-fg)'
                  }} />
                </div>
 
@@ -2623,10 +2742,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box', // Stroke alignment: outside
-                             background: '#0a0a0a',
-                             color: '#FFFFFF',
+                             background: 'var(--color-bg)',
+                             color: 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2656,10 +2775,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box',
-                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? 'var(--color-active-bg)' : 'transparent',
+                               color: props.currentPatternId === p.id ? 'var(--color-active-fg)' : 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2685,9 +2804,9 @@ const AppContent: React.FC<{
                               right: '-1px',
                               width: '11px',
                               height: '11px',
-                              background: '#000000',
-                              border: '1px solid #FFFFFF',
-                              color: '#FFFFFF',
+                              background: 'var(--color-bg)',
+                              border: '1px solid var(--color-border)',
+                              color: 'var(--color-text)',
                               fontSize: '9px',
                               fontFamily: 'Barlow Condensed',
                               fontWeight: 500,
@@ -2700,7 +2819,15 @@ const AppContent: React.FC<{
                               lineHeight: 1,
                               padding: 0
                             }}
-                            className="group-hover:!opacity-100 hover:!bg-white hover:!text-black"
+                            className="group-hover:!opacity-100"
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)';
+                              e.currentTarget.style.color = 'var(--color-hover-fg)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-bg)';
+                              e.currentTarget.style.color = 'var(--color-text)';
+                            }}
                           >
                             ×
                           </button>
@@ -2729,10 +2856,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box', // Stroke alignment: outside
-                             background: '#0a0a0a',
-                             color: '#FFFFFF',
+                             background: 'var(--color-bg)',
+                             color: 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2762,10 +2889,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box',
-                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? 'var(--color-active-bg)' : 'transparent',
+                               color: props.currentPatternId === p.id ? 'var(--color-active-fg)' : 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2791,9 +2918,9 @@ const AppContent: React.FC<{
                               right: '-1px',
                               width: '11px',
                               height: '11px',
-                              background: '#000000',
-                              border: '1px solid #FFFFFF',
-                              color: '#FFFFFF',
+                              background: 'var(--color-bg)',
+                              border: '1px solid var(--color-border)',
+                              color: 'var(--color-text)',
                               fontSize: '9px',
                               fontFamily: 'Barlow Condensed',
                               fontWeight: 500,
@@ -2806,7 +2933,15 @@ const AppContent: React.FC<{
                               lineHeight: 1,
                               padding: 0
                             }}
-                            className="group-hover:!opacity-100 hover:!bg-white hover:!text-black"
+                            className="group-hover:!opacity-100"
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)';
+                              e.currentTarget.style.color = 'var(--color-hover-fg)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-bg)';
+                              e.currentTarget.style.color = 'var(--color-text)';
+                            }}
                           >
                             ×
                           </button>
@@ -2835,10 +2970,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box', // Stroke alignment: outside
-                             background: '#0a0a0a',
-                             color: '#FFFFFF',
+                             background: 'var(--color-bg)',
+                             color: 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2868,10 +3003,10 @@ const AppContent: React.FC<{
                            style={{
                              width: '91px',
                              height: '11px',
-                             border: '2px solid #FFFFFF',
+                             border: '2px solid var(--color-border)',
                              boxSizing: 'content-box',
-                               background: props.currentPatternId === p.id ? '#FFFFFF' : 'transparent',
-                               color: props.currentPatternId === p.id ? '#000000' : '#FFFFFF',
+                               background: props.currentPatternId === p.id ? 'var(--color-active-bg)' : 'transparent',
+                               color: props.currentPatternId === p.id ? 'var(--color-active-fg)' : 'var(--color-text)',
                              fontFamily: "'Barlow Condensed', sans-serif",
                              fontStyle: 'normal',
                              fontWeight: 500,
@@ -2897,9 +3032,9 @@ const AppContent: React.FC<{
                               right: '-1px',
                               width: '11px',
                               height: '11px',
-                              background: '#000000',
-                              border: '1px solid #FFFFFF',
-                              color: '#FFFFFF',
+                              background: 'var(--color-bg)',
+                              border: '1px solid var(--color-border)',
+                              color: 'var(--color-text)',
                               fontSize: '9px',
                               fontFamily: 'Barlow Condensed',
                               fontWeight: 500,
@@ -2912,7 +3047,15 @@ const AppContent: React.FC<{
                               lineHeight: 1,
                               padding: 0
                             }}
-                            className="group-hover:!opacity-100 hover:!bg-white hover:!text-black"
+                            className="group-hover:!opacity-100"
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)';
+                              e.currentTarget.style.color = 'var(--color-hover-fg)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-bg)';
+                              e.currentTarget.style.color = 'var(--color-text)';
+                            }}
                           >
                             ×
                           </button>
@@ -2940,7 +3083,7 @@ const AppContent: React.FC<{
 
           {/* Top Row: Mode, Transport Buttons, Location */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: '#FFFFFF', marginTop: '-2px' }}>
+            <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: 'var(--color-text)', marginTop: '-2px' }}>
               {props.isSongMode ? 'SONG_MODE' : 'PATTERN_MODE'}
             </div>
 
@@ -2951,7 +3094,7 @@ const AppContent: React.FC<{
               onRecord={props.toggleRecord}
             />
                             
-            <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: '#FFFFFF', textTransform: 'uppercase', marginTop: '-2px' }}>
+            <div style={{ fontFamily: 'Barlow Condensed', fontSize: '10px', color: 'var(--color-text)', textTransform: 'uppercase', marginTop: '-2px' }}>
               {props.transport !== TransportStatus.STOPPED ? (props.isSongMode ? props.currentStep?.name : props.activePattern?.name) : 'STANDBY'}
             </div>
           </div>
@@ -2977,13 +3120,13 @@ const AppContent: React.FC<{
           {/* Beat Indicators - 17px below total time */}
           <div className="flex gap-px h-1" style={{ marginTop: '17px' }}>
             {Array.from({ length: Math.max(PADS_PER_BANK, props.visualBeatsCount) }).map((_, i) => (
-              <div key={i} ref={el => { props.beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? '#666666' : '#444444' }} className="flex-1" />
+              <div key={i} ref={el => { props.beatIndicatorRefs.current[i] = el; }} style={{ backgroundColor: i % 4 === 0 ? 'var(--color-downbeat-indicator)' : 'var(--color-beat-indicator)' }} className="flex-1" />
             ))}
           </div>
 
           {/* Progress Bar - 8px below beat indicators */}
-          <div className="h-px w-full bg-[#333333] relative" style={{ marginTop: '8px' }}>
-            <div ref={props.progressBarRef} className="h-full absolute" style={{ backgroundColor: '#FFFFFF' }} />
+          <div className="h-px w-full relative" style={{ marginTop: '8px', backgroundColor: 'var(--color-grid-line)' }}>
+            <div ref={props.progressBarRef} className="h-full absolute" style={{ backgroundColor: 'var(--color-fg)' }} />
           </div>
 
           {/* Level Meters - Symmetrical layout:
@@ -3233,10 +3376,12 @@ const AppContent: React.FC<{
           <SampleLibrary
             samples={props.samples}
             onLoadSample={async () => {
-              // Create file input with multiple file support
+              // Create file input that supports individual files, multiple files, and folder navigation
               const input = document.createElement('input');
               input.type = 'file';
               input.accept = 'audio/*';
+              // Enable multiple file selection - allows selecting one file, multiple files,
+              // or navigating into folders to select files (though not the folder itself)
               input.multiple = true;
               
               input.onchange = async (e) => {
@@ -3257,6 +3402,13 @@ const AppContent: React.FC<{
                     props.samples,
                     (current, total) => props.setImportProgress({ current, total })
                   );
+
+                  // Check if no files were found
+                  if (results.length === 0 && skipped.length === 0 && errors.length === 0) {
+                    showWarning('No audio files selected');
+                    props.setImportProgress(null);
+                    return;
+                  }
 
                   // Update samples list (prepend new samples so they appear at top)
                   if (results.length > 0) {
@@ -3279,76 +3431,6 @@ const AppContent: React.FC<{
                       );
                     } else if (results.length > 0) {
                       // Partial success - warning
-                      showWarning(`${results.length} imported. ${errorMsg}`);
-                    }
-                  } else if (skipped.length > 0 && results.length === 0) {
-                    showWarning('All files were duplicates and were skipped');
-                  }
-                } catch (err) {
-                  showError(
-                    "Import failed",
-                    err instanceof Error ? err.message : "An unknown error occurred."
-                  );
-                } finally {
-                  // Hide progress indicator
-                  props.setImportProgress(null);
-                }
-              };
-              
-              input.click();
-            }}
-            onLoadFolder={async () => {
-              // Create file input with folder/directory selection support
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = 'audio/*';
-              // Enable folder selection (webkitdirectory)
-              (input as any).webkitdirectory = true;
-              // Note: multiple is automatically true when webkitdirectory is enabled
-              
-              input.onchange = async (e) => {
-                const files = Array.from((e.target as HTMLInputElement).files || []);
-                if (files.length === 0) {
-                  // User cancelled file selection - clear progress
-                  props.setImportProgress(null);
-                  return;
-                }
-
-                // Show progress indicator
-                props.setImportProgress({ current: 0, total: files.length });
-
-                try {
-                  // Use optimized batch import handler
-                  const { results, errors, skipped } = await props.processBatchImport(
-                    files,
-                    props.samples,
-                    (current, total) => props.setImportProgress({ current, total })
-                  );
-
-                  if (results.length === 0 && skipped.length === 0 && errors.length === 0) {
-                    showWarning('No audio files found in selected folder');
-                    props.setImportProgress(null);
-                    return;
-                  }
-
-                  // Update samples list (prepend new samples so they appear at top)
-                  if (results.length > 0) {
-                    props.setSamples(prev => [...results, ...prev]);
-                    // Select the first successfully loaded sample
-                    props.setSelectedSampleId(results[0].id);
-                  }
-
-                  // Log summary of results
-                  if (skipped.length > 0) {
-                    // Duplicate files skipped - silent (user doesn't need notification)
-                  }
-                  if (errors.length > 0) {
-                    const errorMsg = errors.length === 1 
-                      ? `Failed to import: ${errors[0]}`
-                      : `Failed to import ${errors.length} files: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`;
-                    if (results.length === 0 && skipped.length === 0) {
-                      showError(errorMsg, "Files may be corrupted or in an unsupported format.");
-                    } else {
                       showWarning(`${results.length} imported. ${errorMsg}`);
                     }
                   } else if (skipped.length > 0 && results.length === 0) {

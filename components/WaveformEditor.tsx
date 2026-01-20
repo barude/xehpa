@@ -508,66 +508,12 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       }
       const amp = displayHeight / 2;
 
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, displayWidth, displayHeight);
+      // Get CSS custom property values for canvas colors
+      const root = getComputedStyle(document.documentElement);
+      const bgColor = root.getPropertyValue('--color-bg').trim() || '#000000';
+      const fgColor = root.getPropertyValue('--color-fg').trim() || '#FFFFFF';
 
-      ctx.strokeStyle = '#09090b';
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 20; i++) {
-        const gx = (i / 20) * displayWidth;
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, displayHeight); ctx.stroke();
-      }
-      ctx.beginPath(); ctx.moveTo(0, amp); ctx.lineTo(displayWidth, amp); ctx.stroke();
-
-      // If there's no audio, just draw a static horizontal line in the middle
-      if (hasNoAudio) {
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, amp);
-        ctx.lineTo(displayWidth, amp);
-        ctx.stroke();
-      } else {
-        const data = sample.buffer.getChannelData(0);
-        const startSampleIdx = Math.floor((effectiveOffset / duration) * data.length);
-        const endSampleIdx = Math.floor(((effectiveOffset + viewDuration) / duration) * data.length);
-        const samplesInView = endSampleIdx - startSampleIdx;
-
-        // High-quality waveform rendering with subpixel precision
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 1;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        
-        // Use more sample points for smoother rendering on high-DPI displays
-        const renderWidth = displayWidth * dpr;
-        for (let i = 0; i < renderWidth; i++) {
-          const normalizedI = i / dpr;
-          const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
-          const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
-          if (s1 >= data.length) break;
-          let min = 1.0, max = -1.0;
-          const actualS2 = Math.max(s1 + 1, s2);
-          for (let j = s1; j < actualS2 && j < data.length; j++) {
-            const datum = data[j];
-            if (datum < min) min = datum;
-            if (datum > max) max = datum;
-          }
-          ctx.moveTo(normalizedI, (1 + min) * amp);
-          ctx.lineTo(normalizedI, (1 + max) * amp);
-        }
-        ctx.stroke();
-      }
-
-      // Skip the rest of the rendering (markers, playhead, etc.) when there's no audio
-      if (hasNoAudio) {
-        if (isRendering) {
-          animationRef.current = requestAnimationFrame(render);
-        }
-        return;
-      }
-
+      // Calculate selected area boundaries early (needed for waveform rendering)
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
       const startX = timeToX(start);
       const endX = timeToX(end);
@@ -577,14 +523,171 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const rightPos = Math.max(start, end);
       const leftX = timeToX(leftPos);
       const rightX = timeToX(rightPos);
+      const selectedLeft = Math.max(0, leftX);
+      const selectedRight = Math.min(displayWidth, rightX);
+      const hasSelection = selectedRight > selectedLeft;
 
-      // Invert colors in selected section (always between leftmost and rightmost)
-      if (leftX < displayWidth && rightX > 0) {
-        const previousCompositeOp = ctx.globalCompositeOperation;
-        ctx.globalCompositeOperation = 'difference';
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(Math.max(0, leftX), 0, Math.min(displayWidth, rightX) - Math.max(0, leftX), displayHeight);
-        ctx.globalCompositeOperation = previousCompositeOp;
+      // Draw background for entire canvas
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, displayWidth, displayHeight);
+
+      // Draw selected area background (inverted: fgColor background)
+      if (hasSelection) {
+        ctx.fillStyle = fgColor;
+        ctx.fillRect(selectedLeft, 0, selectedRight - selectedLeft, displayHeight);
+      }
+
+      // If there's no audio, just draw a static horizontal line in the middle
+      if (hasNoAudio) {
+        // Draw line in non-selected areas with fgColor
+        if (hasSelection) {
+          // Draw before selection
+          if (selectedLeft > 0) {
+            ctx.strokeStyle = fgColor;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, amp);
+            ctx.lineTo(selectedLeft, amp);
+            ctx.stroke();
+          }
+          // Draw after selection
+          if (selectedRight < displayWidth) {
+            ctx.strokeStyle = fgColor;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(selectedRight, amp);
+            ctx.lineTo(displayWidth, amp);
+            ctx.stroke();
+          }
+          // Draw in selected area with bgColor (inverted)
+          ctx.strokeStyle = bgColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(selectedLeft, amp);
+          ctx.lineTo(selectedRight, amp);
+          ctx.stroke();
+        } else {
+          // No selection - draw normally
+          ctx.strokeStyle = fgColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, amp);
+          ctx.lineTo(displayWidth, amp);
+          ctx.stroke();
+        }
+      } else {
+        const data = sample.buffer.getChannelData(0);
+        const startSampleIdx = Math.floor((effectiveOffset / duration) * data.length);
+        const endSampleIdx = Math.floor(((effectiveOffset + viewDuration) / duration) * data.length);
+        const samplesInView = endSampleIdx - startSampleIdx;
+
+        // High-quality waveform rendering with subpixel precision
+        ctx.lineWidth = 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        // Use more sample points for smoother rendering on high-DPI displays
+        const renderWidth = displayWidth * dpr;
+        
+        // Draw waveform in non-selected areas (fgColor on bgColor)
+        if (hasSelection) {
+          // Draw before selection
+          if (selectedLeft > 0) {
+            ctx.strokeStyle = fgColor;
+            ctx.beginPath();
+            for (let i = 0; i < renderWidth; i++) {
+              const normalizedI = i / dpr;
+              if (normalizedI >= selectedLeft) break;
+              const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
+              const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
+              if (s1 >= data.length) break;
+              let min = 1.0, max = -1.0;
+              const actualS2 = Math.max(s1 + 1, s2);
+              for (let j = s1; j < actualS2 && j < data.length; j++) {
+                const datum = data[j];
+                if (datum < min) min = datum;
+                if (datum > max) max = datum;
+              }
+              ctx.moveTo(normalizedI, (1 + min) * amp);
+              ctx.lineTo(normalizedI, (1 + max) * amp);
+            }
+            ctx.stroke();
+          }
+          
+          // Draw after selection
+          if (selectedRight < displayWidth) {
+            ctx.strokeStyle = fgColor;
+            ctx.beginPath();
+            for (let i = 0; i < renderWidth; i++) {
+              const normalizedI = i / dpr;
+              if (normalizedI < selectedRight) continue;
+              if (normalizedI >= displayWidth) break;
+              const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
+              const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
+              if (s1 >= data.length) break;
+              let min = 1.0, max = -1.0;
+              const actualS2 = Math.max(s1 + 1, s2);
+              for (let j = s1; j < actualS2 && j < data.length; j++) {
+                const datum = data[j];
+                if (datum < min) min = datum;
+                if (datum > max) max = datum;
+              }
+              ctx.moveTo(normalizedI, (1 + min) * amp);
+              ctx.lineTo(normalizedI, (1 + max) * amp);
+            }
+            ctx.stroke();
+          }
+          
+          // Draw in selected area with bgColor (inverted: bgColor waveform on fgColor background)
+          ctx.strokeStyle = bgColor;
+          ctx.beginPath();
+          for (let i = 0; i < renderWidth; i++) {
+            const normalizedI = i / dpr;
+            if (normalizedI < selectedLeft) continue;
+            if (normalizedI >= selectedRight) break;
+            const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
+            const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
+            if (s1 >= data.length) break;
+            let min = 1.0, max = -1.0;
+            const actualS2 = Math.max(s1 + 1, s2);
+            for (let j = s1; j < actualS2 && j < data.length; j++) {
+              const datum = data[j];
+              if (datum < min) min = datum;
+              if (datum > max) max = datum;
+            }
+            ctx.moveTo(normalizedI, (1 + min) * amp);
+            ctx.lineTo(normalizedI, (1 + max) * amp);
+          }
+          ctx.stroke();
+        } else {
+          // No selection - draw normally with fgColor
+          ctx.strokeStyle = fgColor;
+          ctx.beginPath();
+          for (let i = 0; i < renderWidth; i++) {
+            const normalizedI = i / dpr;
+            const s1 = startSampleIdx + Math.floor((normalizedI / displayWidth) * samplesInView);
+            const s2 = startSampleIdx + Math.floor(((normalizedI + 1/dpr) / displayWidth) * samplesInView);
+            if (s1 >= data.length) break;
+            let min = 1.0, max = -1.0;
+            const actualS2 = Math.max(s1 + 1, s2);
+            for (let j = s1; j < actualS2 && j < data.length; j++) {
+              const datum = data[j];
+              if (datum < min) min = datum;
+              if (datum > max) max = datum;
+            }
+            ctx.moveTo(normalizedI, (1 + min) * amp);
+            ctx.lineTo(normalizedI, (1 + max) * amp);
+          }
+          ctx.stroke();
+        }
+      }
+
+      // Skip the rest of the rendering (markers, playhead, etc.) when there's no audio
+      if (hasNoAudio) {
+        if (isRendering) {
+          animationRef.current = requestAnimationFrame(render);
+        }
+        return;
       }
 
       const now = audioEngine.ctx.currentTime;
@@ -622,7 +725,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           if (phX >= 0 && phX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = '#FFFFFF';
+            ctx.strokeStyle = fgColor;
             ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
             ctx.globalCompositeOperation = prevOp;
@@ -651,7 +754,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           if (ghX >= 0 && ghX <= displayWidth) {
             const prevOp = ctx.globalCompositeOperation;
             ctx.globalCompositeOperation = 'difference';
-            ctx.strokeStyle = '#FFFFFF';
+            ctx.strokeStyle = fgColor;
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
             ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
@@ -693,7 +796,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         fontWeight: 500,
         fontSize: '10px',
         lineHeight: '12px',
-        color: '#FFFFFF',
+        color: 'var(--color-text)',
         top: `${SAMPLE_NAME_TOP}px`,
         left: '0px',
         // Ensure it doesn't overlap with mono button - stop 30px before it
@@ -716,8 +819,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '31px',
           height: '17px',
-          background: activeFocusMode === 'start' ? '#FFFFFF' : 'transparent',
-          border: '2px solid #FFFFFF',
+          background: activeFocusMode === 'start' ? 'var(--color-active-bg)' : 'transparent',
+          border: '2px solid var(--color-border)',
           boxSizing: 'border-box',
           top: `${BUTTONS_TOP}px`,
           left: `${START_LEFT}px`,
@@ -735,7 +838,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 500,
           fontSize: '10px',
           lineHeight: '12px',
-          color: activeFocusMode === 'start' ? '#000000' : '#FFFFFF',
+          color: activeFocusMode === 'start' ? 'var(--color-active-fg)' : 'var(--color-text)',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -755,9 +858,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '31px',
           height: '17px',
-          border: '2px solid #FFFFFF',
+          border: '2px solid var(--color-border)',
           boxSizing: 'border-box',
-          background: activeFocusMode === 'end' ? '#FFFFFF' : 'transparent',
+          background: activeFocusMode === 'end' ? 'var(--color-active-bg)' : 'transparent',
           top: `${BUTTONS_TOP}px`,
           left: `${END_LEFT}px`,
           // Add subtle transition for smoother visual feedback
@@ -774,7 +877,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 500,
           fontSize: '10px',
           lineHeight: '12px',
-          color: activeFocusMode === 'end' ? '#000000' : '#FFFFFF',
+          color: activeFocusMode === 'end' ? 'var(--color-active-fg)' : 'var(--color-text)',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -808,10 +911,10 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           height: '29px',
           background: isMonoFlashing 
             ? 'transparent'
-            : (isMonoHovered ? '#FFFFFF' : (playMode === 'MONO' ? '#FFFFFF' : 'transparent')),
+            : (isMonoHovered ? 'var(--color-active-bg)' : (playMode === 'MONO' ? 'var(--color-active-bg)' : 'transparent')),
           border: isMonoFlashing 
-            ? '2px solid #FFFFFF'
-            : (isMonoHovered ? '2px solid #FFFFFF' : (playMode === 'MONO' ? 'none' : '2px solid #FFFFFF')),
+            ? '2px solid var(--color-border)'
+            : (isMonoHovered ? '2px solid var(--color-border)' : (playMode === 'MONO' ? 'none' : '2px solid var(--color-border)')),
           boxSizing: 'border-box',
           top: `${MONO_TOP}px`,
           left: `${MONO_LEFT}px`,
@@ -833,8 +936,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontSize: '10px',
           lineHeight: '12px',
           color: isMonoFlashing
-            ? '#FFFFFF'
-            : (isMonoHovered ? '#000000' : (playMode === 'MONO' ? '#000000' : '#FFFFFF')),
+            ? 'var(--color-active-fg)'
+            : (isMonoHovered ? 'var(--color-active-fg)' : (playMode === 'MONO' ? 'var(--color-active-fg)' : 'var(--color-text)')),
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
@@ -856,7 +959,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontSize: '10px',
           lineHeight: '12px',
           textAlign: 'right',
-          color: '#FFFFFF',
+          color: 'var(--color-text)',
           top: `${PAD_TOP}px`,
           right: '0px'
         }}>
@@ -874,7 +977,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         fontWeight: 400,
         fontSize: '10px',
         lineHeight: '12px',
-        color: '#FFFFFF',
+        color: 'var(--color-text)',
         top: `${BUTTONS_TOP + 2.5}px`,
         left: `${POS_LEFT}px`,
         textAlign: 'right'
@@ -891,9 +994,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '31px',
           height: '17px',
-          border: isLoopingPreview ? 'none' : '2px solid #FFFFFF',
+          border: isLoopingPreview ? 'none' : '2px solid var(--color-border)',
           boxSizing: 'border-box',
-          background: isLoopingPreview ? '#FFFFFF' : 'transparent',
+          background: isLoopingPreview ? 'var(--color-active-bg)' : 'transparent',
           top: `${BUTTONS_TOP}px`,
           left: `${LOOP_LEFT}px`
         }}
@@ -908,7 +1011,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontSize: '10px',
           lineHeight: '12px',
           textAlign: 'center',
-          color: isLoopingPreview ? '#000000' : '#FFFFFF',
+          color: isLoopingPreview ? 'var(--color-active-fg)' : 'var(--color-text)',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -926,9 +1029,9 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '41px',
           height: '17px',
-          border: isReversed ? 'none' : '2px solid #FFFFFF',
+          border: isReversed ? 'none' : '2px solid var(--color-border)',
           boxSizing: 'border-box',
-          background: isReversed ? '#FFFFFF' : 'transparent',
+          background: isReversed ? 'var(--color-active-bg)' : 'transparent',
           top: `${BUTTONS_TOP}px`,
           left: `${REVERSE_LEFT}px`
         }}
@@ -943,7 +1046,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontSize: '10px',
           lineHeight: '12px',
           textAlign: 'center',
-          color: isReversed ? '#000000' : '#FFFFFF',
+          color: isReversed ? 'var(--color-active-fg)' : 'var(--color-text)',
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)'
@@ -959,8 +1062,8 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '313px',
           height: '178px',
-          borderTop: '2px solid #FFFFFF',
-          borderBottom: '2px solid #FFFFFF',
+          borderTop: '2px solid var(--color-border)',
+          borderBottom: '2px solid var(--color-border)',
           borderLeft: 'none',
           borderRight: 'none',
           boxSizing: 'border-box',
@@ -995,7 +1098,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           position: 'absolute',
           width: '313px',
           height: '0px',
-          border: '1px solid #FFFFFF',
+          border: '1px solid var(--color-border)',
           top: `${ZOOM_SLIDER_TOP}px`,
           left: '0px',
           cursor: 'pointer'
@@ -1062,7 +1165,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
             position: 'absolute',
             width: `${zoomSliderWidth}px`,
             height: '0px',
-            border: '2px solid #FFFFFF',
+            border: '2px solid var(--color-border)',
             top: '-2px',
             left: `${zoomSliderPosition}px`,
             cursor: 'grab'
@@ -1118,7 +1221,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: '#FFFFFF'
+          color: 'var(--color-text)'
         }}>
           ALT+CLICK: PLAY
         </div>
@@ -1132,7 +1235,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: '#FFFFFF'
+          color: 'var(--color-text)'
         }}>
           L/R CLICK: SWITCH POINT
         </div>
@@ -1146,7 +1249,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           fontWeight: 400,
           fontSize: '10px',
           lineHeight: '12px',
-          color: '#FFFFFF'
+          color: 'var(--color-text)'
         }}>
           PINCH: ZOOM
         </div>

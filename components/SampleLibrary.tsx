@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SampleData } from '../types';
 import { deleteSampleFromDB } from '../services/db';
 import { useHint } from './HintDisplay';
@@ -6,7 +6,6 @@ import { useHint } from './HintDisplay';
 interface SampleLibraryProps {
   samples: SampleData[];
   onLoadSample: () => void;
-  onLoadFolder?: () => void;
   onSampleSelect: (sampleId: string | null) => void;
   selectedSampleId: string | null;
   onSamplesChange: (samples: SampleData[]) => void;
@@ -15,12 +14,13 @@ interface SampleLibraryProps {
 const SampleLibrary: React.FC<SampleLibraryProps> = ({
   samples,
   onLoadSample,
-  onLoadFolder,
   onSampleSelect,
   selectedSampleId,
   onSamplesChange
 }) => {
   const [hoveredSampleId, setHoveredSampleId] = useState<string | null>(null);
+  const [hoveredButton, setHoveredButton] = useState<'load-sample' | 'delete' | null>(null);
+  const [pressedButton, setPressedButton] = useState<'load-sample' | 'delete' | null>(null);
   const { setHint } = useHint();
 
   const handleDelete = async (sampleId: string, e: React.MouseEvent) => {
@@ -42,16 +42,30 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // #region agent log
+  useEffect(() => {
+    fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:45',message:'Component render with state',data:{hoveredButton, pressedButton, hoveredSampleId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // Check CSS variable values
+    const root = getComputedStyle(document.documentElement);
+    const hoverBg = root.getPropertyValue('--color-hover-bg').trim();
+    const hoverFg = root.getPropertyValue('--color-hover-fg').trim();
+    const activeBg = root.getPropertyValue('--color-active-bg').trim();
+    const activeFg = root.getPropertyValue('--color-active-fg').trim();
+    fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:52',message:'CSS variable values',data:{hoverBg, hoverFg, activeBg, activeFg},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  }, [hoveredButton, pressedButton, hoveredSampleId]);
+  // #endregion
+
   return (
     <div
+      className="sample-library-container"
       style={{
         boxSizing: 'border-box',
         width: '313px',
         height: '214px',
-        border: '2px solid #FFFFFF',
+        border: '2px solid var(--color-border)',
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#000000'
+        backgroundColor: 'var(--color-bg)'
       }}
     >
       {/* Sticky Button Bar */}
@@ -64,34 +78,36 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
           height: '17px',
           margin: '0 auto',
           display: 'flex',
-          border: '2px solid #000000',
-          backgroundColor: '#FFFFFF'
+          border: '2px solid var(--color-active-fg)',
+          backgroundColor: 'var(--color-active-bg)'
         }}
       >
         {/* LOAD SAMPLE Button */}
         <button
           onClick={onLoadSample}
-          onMouseEnter={(e) => {
+          onMouseEnter={() => {
+            // #region agent log
+            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:75',message:'onMouseEnter fired for LOAD SAMPLE',data:{hoveredButton, pressedButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
             setHint('LOAD SAMPLE · MULTIPLE FILES');
-            e.currentTarget.style.backgroundColor = '#000000';
-            e.currentTarget.style.color = '#FFFFFF';
+            setHoveredButton('load-sample');
+            // #region agent log
+            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:80',message:'setHoveredButton called with load-sample',data:{previousHoveredButton:hoveredButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
           }}
-          onMouseLeave={(e) => {
+          onMouseLeave={() => {
+            // #region agent log
+            fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:84',message:'onMouseLeave fired for LOAD SAMPLE',data:{hoveredButton, pressedButton},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
             setHint(null);
-            e.currentTarget.style.backgroundColor = '#FFFFFF';
-            e.currentTarget.style.color = '#000000';
+            setHoveredButton(null);
           }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.backgroundColor = '#000000';
-            e.currentTarget.style.color = '#FFFFFF';
+          onMouseDown={() => {
+            setPressedButton('load-sample');
           }}
-          onMouseUp={(e) => {
-            const target = e.currentTarget;
+          onMouseUp={() => {
             setTimeout(() => {
-              if (target && target.style) {
-                target.style.backgroundColor = '#FFFFFF';
-                target.style.color = '#000000';
-              }
+              setPressedButton(null);
             }, 100);
           }}
           style={{
@@ -102,80 +118,42 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             fontWeight: 500,
             fontSize: '10px',
             lineHeight: '12px',
-            color: '#000000',
+            color: (() => {
+              // #region agent log
+              const isHovered = hoveredButton === 'load-sample' || pressedButton === 'load-sample';
+              // Sample library buttons need inverted hover: black bg, white text (opposite of default white bg, black text)
+              const colorValue = isHovered ? 'var(--color-fg)' : 'var(--color-active-fg)';
+              fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:101',message:'LOAD SAMPLE color style evaluation',data:{hoveredButton, pressedButton, isHovered, colorValue},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'C'})}).catch(()=>{});
+              // #endregion
+              return colorValue;
+            })(),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: (() => {
+              // #region agent log
+              const isHovered = hoveredButton === 'load-sample' || pressedButton === 'load-sample';
+              // Sample library buttons need inverted hover: black bg, white text (opposite of default white bg, black text)
+              const bgValue = isHovered ? 'var(--color-bg)' : 'var(--color-active-bg)';
+              fetch('http://127.0.0.1:7248/ingest/0a4e9d8e-cf73-4c80-b6bc-2336f886527e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SampleLibrary.tsx:108',message:'LOAD SAMPLE backgroundColor style evaluation',data:{hoveredButton, pressedButton, isHovered, bgValue},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix2',hypothesisId:'C'})}).catch(()=>{});
+              // #endregion
+              return bgValue;
+            })(),
             cursor: 'pointer',
             padding: 0,
             margin: 0,
             border: 'none',
-            borderRight: '2px solid #000000',
+            borderRight: '2px solid var(--color-active-fg)',
             textTransform: 'uppercase',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            transition: 'none'
           }}
         >
           LOAD SAMPLE
         </button>
-        {/* LOAD FOLDER Button */}
-        {onLoadFolder && (
-          <button
-            onClick={onLoadFolder}
-            onMouseEnter={(e) => {
-              setHint('LOAD FOLDER · IMPORT DIRECTORY');
-              e.currentTarget.style.backgroundColor = '#000000';
-              e.currentTarget.style.color = '#FFFFFF';
-            }}
-            onMouseLeave={(e) => {
-              setHint(null);
-              e.currentTarget.style.backgroundColor = '#FFFFFF';
-              e.currentTarget.style.color = '#000000';
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.backgroundColor = '#000000';
-              e.currentTarget.style.color = '#FFFFFF';
-            }}
-            onMouseUp={(e) => {
-              const target = e.currentTarget;
-              setTimeout(() => {
-                if (target && target.style) {
-                  target.style.backgroundColor = '#FFFFFF';
-                  target.style.color = '#000000';
-                }
-              }, 100);
-            }}
-            style={{
-              flex: 1,
-              height: '13px',
-              fontFamily: 'Barlow Condensed',
-              fontStyle: 'normal',
-              fontWeight: 500,
-              fontSize: '10px',
-              lineHeight: '12px',
-              color: '#000000',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: '#FFFFFF',
-              cursor: 'pointer',
-              padding: 0,
-              margin: 0,
-              border: 'none',
-              borderRight: '2px solid #000000',
-              textTransform: 'uppercase',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              boxSizing: 'border-box'
-            }}
-          >
-            LOAD FOLDER
-          </button>
-        )}
         {/* DELETE Button */}
         <button
           onClick={(e) => {
@@ -185,35 +163,28 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             }
           }}
           disabled={!selectedSampleId}
-          onMouseEnter={(e) => {
+          onMouseEnter={() => {
             if (selectedSampleId) {
               setHint('DELETE · REMOVE SAMPLE');
-              e.currentTarget.style.backgroundColor = '#000000';
-              e.currentTarget.style.color = '#FFFFFF';
+              setHoveredButton('delete');
             }
           }}
-          onMouseLeave={(e) => {
+          onMouseLeave={() => {
             setHint(null);
-            e.currentTarget.style.backgroundColor = '#FFFFFF';
-            e.currentTarget.style.color = selectedSampleId ? '#000000' : '#999999';
+            setHoveredButton(null);
           }}
-          onMouseDown={(e) => {
+          onMouseDown={() => {
             if (selectedSampleId) {
-              e.currentTarget.style.backgroundColor = '#000000';
-              e.currentTarget.style.color = '#FFFFFF';
+              setPressedButton('delete');
             }
           }}
-            onMouseUp={(e) => {
-              if (selectedSampleId) {
-                const target = e.currentTarget;
-                setTimeout(() => {
-                  if (target && target.style) {
-                    target.style.backgroundColor = '#FFFFFF';
-                    target.style.color = '#000000';
-                  }
-                }, 100);
-              }
-            }}
+          onMouseUp={() => {
+            if (selectedSampleId) {
+              setTimeout(() => {
+                setPressedButton(null);
+              }, 100);
+            }
+          }}
           style={{
             flex: 1,
             height: '13px',
@@ -222,11 +193,15 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             fontWeight: 500,
             fontSize: '10px',
             lineHeight: '12px',
-            color: selectedSampleId ? '#000000' : '#999999',
+            color: selectedSampleId 
+              ? ((hoveredButton === 'delete' || pressedButton === 'delete') ? 'var(--color-fg)' : 'var(--color-active-fg)')
+              : 'var(--color-disabled-text)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: selectedSampleId
+              ? ((hoveredButton === 'delete' || pressedButton === 'delete') ? 'var(--color-bg)' : 'var(--color-active-bg)')
+              : 'var(--color-active-bg)',
             cursor: selectedSampleId ? 'pointer' : 'not-allowed',
             padding: 0,
             margin: 0,
@@ -235,7 +210,8 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            transition: 'none'
           }}
         >
           DELETE
@@ -281,7 +257,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
               style={{
                 width: '309px',
                 height: '11px',
-                backgroundColor: (isSelected || isHovered) ? '#FFFFFF' : 'transparent',
+                backgroundColor: (isSelected || isHovered) ? 'var(--color-active-bg)' : 'transparent',
                 display: 'flex',
                 alignItems: 'center',
                 position: 'relative',
@@ -298,7 +274,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
                   fontWeight: 500,
                   fontSize: '10px',
                   lineHeight: '12px',
-                  color: (isSelected || isHovered) ? '#000000' : '#FFFFFF',
+                  color: (isSelected || isHovered) ? 'var(--color-active-fg)' : 'var(--color-text)',
                   width: '7px',
                   height: '12px',
                   display: 'flex',
@@ -318,7 +294,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
                   fontWeight: 500,
                   fontSize: '10px',
                   lineHeight: '12px',
-                  color: (isSelected || isHovered) ? '#000000' : '#FFFFFF',
+                  color: (isSelected || isHovered) ? 'var(--color-active-fg)' : 'var(--color-text)',
                   width: `${maxNameWidth}px`,
                   height: '12px',
                   display: 'flex',
@@ -342,7 +318,7 @@ const SampleLibrary: React.FC<SampleLibraryProps> = ({
                   fontWeight: 500,
                   fontSize: '10px',
                   lineHeight: '12px',
-                  color: (isSelected || isHovered) ? '#000000' : '#FFFFFF',
+                  color: (isSelected || isHovered) ? 'var(--color-active-fg)' : 'var(--color-text)',
                   width: '14px',
                   height: '12px',
                   display: 'flex',
