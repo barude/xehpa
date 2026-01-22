@@ -513,6 +513,31 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       const bgColor = root.getPropertyValue('--color-bg').trim() || '#000000';
       const fgColor = root.getPropertyValue('--color-fg').trim() || '#FFFFFF';
 
+      // Parse hex color to RGB components
+      const parseHex = (hex: string) => {
+        const h = hex.startsWith('#') ? hex.slice(1) : hex;
+        return {
+          r: parseInt(h.slice(0, 2), 16) || 0,
+          g: parseInt(h.slice(2, 4), 16) || 0,
+          b: parseInt(h.slice(4, 6), 16) || 0
+        };
+      };
+
+      // Calculate the magic stroke color for 'difference' mode.
+      // Math: difference(dest, src) = |dest - src|
+      // If src = bg + fg, then:
+      //   Over bgColor: |bg - (bg+fg)| = |−fg| = fg ✓
+      //   Over fgColor: |fg - (bg+fg)| = |−bg| = bg ✓
+      // This produces ONLY theme colors as output!
+      const bgRGB = parseHex(bgColor);
+      const fgRGB = parseHex(fgColor);
+      const playheadRGB = {
+        r: Math.min(255, bgRGB.r + fgRGB.r),
+        g: Math.min(255, bgRGB.g + fgRGB.g),
+        b: Math.min(255, bgRGB.b + fgRGB.b)
+      };
+      const playheadStroke = `rgb(${playheadRGB.r}, ${playheadRGB.g}, ${playheadRGB.b})`;
+
       // Calculate selected area boundaries early (needed for waveform rendering)
       const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * displayWidth;
       const startX = timeToX(start);
@@ -723,31 +748,16 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
           
           const phX = timeToX(phTime);
           if (phX >= 0 && phX <= displayWidth) {
-            // Draw playhead using ONLY theme colors (no composite modes).
-            // In non-selected areas (bgColor bg): use fgColor for contrast.
-            // In selected areas (fgColor bg): use bgColor for contrast.
+            // Draw playhead using 'difference' mode with calculated stroke.
+            // The stroke color (bg + fg) produces ONLY theme colors:
+            //   Over bgColor → fgColor appears
+            //   Over fgColor → bgColor appears
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
+            ctx.strokeStyle = playheadStroke;
             ctx.lineWidth = 2;
-            
-            // Draw segment in non-selected area (before selection)
-            if (phX < selectedLeft) {
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
-            }
-            // Draw segment in non-selected area (after selection)  
-            else if (phX > selectedRight) {
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
-            }
-            // Playhead crosses the selection boundary - draw in two segments
-            else if (hasSelection) {
-              // Part in selected area: use bgColor
-              ctx.strokeStyle = bgColor;
-              ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
-            } else {
-              // No selection at all - use fgColor
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
-            }
+            ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, displayHeight); ctx.stroke();
+            ctx.globalCompositeOperation = prevOp;
           }
         }
       }
@@ -771,33 +781,15 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
         } else if (phTime <= duration && (!isLoopingPreview || phTime <= end + 0.1)) {
           const ghX = timeToX(phTime);
           if (ghX >= 0 && ghX <= displayWidth) {
-            // Draw preview playhead using ONLY theme colors (no composite modes).
-            // Same logic as main playhead but with dashed line.
+            // Draw preview playhead using same 'difference' mode approach.
+            const prevOp = ctx.globalCompositeOperation;
+            ctx.globalCompositeOperation = 'difference';
+            ctx.strokeStyle = playheadStroke;
             ctx.lineWidth = 2;
             ctx.setLineDash([2, 4]);
-            
-            // Draw segment in non-selected area (before selection)
-            if (ghX < selectedLeft) {
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
-            }
-            // Draw segment in non-selected area (after selection)  
-            else if (ghX > selectedRight) {
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
-            }
-            // Playhead crosses the selection boundary - draw in two segments
-            else if (hasSelection) {
-              // Part in selected area: use bgColor
-              ctx.strokeStyle = bgColor;
-              ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
-            } else {
-              // No selection at all - use fgColor
-              ctx.strokeStyle = fgColor;
-              ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
-            }
-            
+            ctx.beginPath(); ctx.moveTo(ghX, 0); ctx.lineTo(ghX, displayHeight); ctx.stroke();
             ctx.setLineDash([]);
+            ctx.globalCompositeOperation = prevOp;
           }
         }
       }

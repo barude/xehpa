@@ -31,9 +31,9 @@ import loadJSZip from './services/jszip-shim';
 import { showError, showWarning } from './utils/errors';
 
 // Theme definitions
-export type Theme = 'blk' | 'inv' | 'red' | 'arc' | 'neo' | 'blu';
+export type Theme = 'blk' | 'inv' | 'red' | 'prp' | 'neo' | 'blu';
 
-const THEMES: Theme[] = ['blk', 'inv', 'red', 'arc', 'neo', 'blu'];
+const THEMES: Theme[] = ['blk', 'inv', 'red', 'prp', 'neo', 'blu'];
 
 const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
   switch (theme) {
@@ -43,8 +43,8 @@ const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
       return { bg: '#F2F4F3', fg: '#0A0908' };
     case 'red':
       return { bg: '#0A0908', fg: '#EA2B1F' };
-    case 'arc':
-      return { bg: '#EDEEC0', fg: '#433E0E' };
+    case 'prp':
+      return { bg: '#E7DFC6', fg: '#623CEA' };
     case 'neo':
       return { bg: '#0A100D', fg: '#5CF64A' };
     case 'blu':
