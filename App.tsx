@@ -1976,21 +1976,21 @@ const AppContent: React.FC<{
         {/* LEFT TOP - Header/Logo/Menu (height: 157px) */}
         <div style={{ height: '157px', flexShrink: 0, position: 'relative' }} className="flex flex-col">
           {/* Tagline - Kode Mono (above logo) */}
-          <span 
-            style={{ 
-              position: 'absolute',
-              top: '22px',
-              left: '65px',
-              fontFamily: "'Kode Mono', monospace",
-              fontWeight: 400,
-              fontSize: '10px',
-              lineHeight: '13px',
-              letterSpacing: '0.05em',
-              color: 'var(--color-text)',
-            }}
-          >
-            A PRODUCTION SAMPLER DESIGNED BY BARÜDE
-          </span>
+<span 
+  style={{ 
+    position: 'absolute',
+    top: '22px',
+    left: '65px',
+    fontFamily: "'Kode Mono', monospace",
+    fontWeight: 400,
+    fontSize: '10.4px',
+    lineHeight: '13px',
+    letterSpacing: '0.05em',
+    color: 'var(--color-text)',
+  }}
+>
+  A SAMPLE SEQUENCER DESIGNED BY BARÜDE
+</span>
           
           {/* XEHPA - BhuTuka Expanded One */}
           <span 
