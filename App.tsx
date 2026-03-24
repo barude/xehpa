@@ -26,6 +26,19 @@ import { arrayBufferToBase64, base64ToArrayBuffer } from './utils/encoding';
 import { createBank } from './utils/pads';
 import { isTyping } from './utils/dom';
 import { formatTimeForDisplay } from './utils/formatting';
+import { computeSchedulerFrame } from './utils/transportScheduler';
+import {
+  appendHitToPattern,
+  appendHitToTake,
+  buildFreeTimingCaptureKey,
+  buildQuantizedCaptureKey,
+  createRecordingTake,
+  isDuplicateFreeTimingCapture,
+  quantizeBeatOffset,
+  removeTakeFromPatterns,
+  resolveRecordingTargetPatternId,
+  type RecordingTake,
+} from './utils/recording';
 import { TEMPO_MIN, TEMPO_MAX, TEMPO_DEFAULT, PADS_PER_BANK, MAX_PADS, MAX_ARRANGEMENT_BANKS, DEFAULT_PATTERN_BARS, BEATS_PER_BAR, BANK_LETTERS, PATTERN_BAR_OPTIONS, MAX_HITS_PER_PATTERN } from './constants';
 import loadJSZip from './services/jszip-shim';
 import { showError, showWarning } from './utils/errors';
@@ -44,9 +57,9 @@ const getThemeColors = (theme: Theme): { bg: string; fg: string } => {
     case 'red':
       return { bg: '#0A0908', fg: '#EA2B1F' };
     case 'prp':
-      return { bg: '#E7DFC6', fg: '#623CEA' };
+      return { bg: '#F3EBDD', fg: '#355070' };
     case 'neo':
-      return { bg: '#0A100D', fg: '#5CF64A' };
+      return { bg: '#11161D', fg: '#8FD3C1' };
     case 'blu':
       return { bg: '#29339B', fg: '#FBFEF9' };
     default:
@@ -61,15 +74,62 @@ const INITIAL_PATTERN: Pattern = {
   hits: []
 };
 
+const PREVIEW_PLAYBACK_GAIN_SCALE = 0.75;
+const SCHEDULER_TICK_MS = 25;
+const HIDDEN_SCHEDULER_TICK_MS = 250;
+
 const createDefaultArrangement = (firstPatternId: string): SongStep[] => [
   { id: randomUUID(), name: 'Main', activePatternIds: [firstPatternId], armedPatternId: firstPatternId, repeats: 1 }
 ];
+
+type SaveFlowKind = 'save-project' | 'export-wav' | 'export-stems';
+
+type FileOperationKind = SaveFlowKind | 'load-project';
+
+type SaveDialogState = {
+  kind: SaveFlowKind;
+  title: string;
+  confirmLabel: string;
+  extension: string;
+  defaultName: string;
+} | null;
+
+type FileOperationState = {
+  kind: FileOperationKind;
+  title: string;
+  detail: string;
+  progress: number | null;
+  indeterminate: boolean;
+};
+
+const FILE_NAME_SANITIZER = /[<>:"/\\|?*\u0000-\u001F]/g;
+
+const buildDefaultName = (prefix: string) => `${prefix}_${new Date().getTime()}`;
+
+const normalizeFileStem = (name: string, fallback: string) => {
+  const cleaned = name.replace(FILE_NAME_SANITIZER, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned : fallback;
+};
+
+const triggerDownload = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
 
 export default function App() {
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [isProjectLoading, setIsProjectLoading] = useState(false);
   const [isExportingStems, setIsExportingStems] = useState(false);
   const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [saveDialog, setSaveDialog] = useState<SaveDialogState>(null);
+  const [saveNameInput, setSaveNameInput] = useState('');
+  const [fileOperation, setFileOperation] = useState<FileOperationState | null>(null);
   
   // Initialize patterns first to ensure we have at least one
   const [patterns, setPatterns] = useState<Pattern[]>(() => {
@@ -144,11 +204,13 @@ export default function App() {
 
   const progressBarRef = useRef<HTMLDivElement>(null);
   const beatIndicatorRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const fileOperationTimeoutRef = useRef<number | null>(null);
+  const loadInputRef = useRef<HTMLInputElement>(null);
   
   const songStartTimeRef = useRef(0);
   const sectionStartTimeRef = useRef(0);
   const lastScheduledTimeRef = useRef(0); 
-  const lastScheduledHitIdsRef = useRef<Map<string, Set<string>>>(new Map()); 
+  const scheduledHitKeysRef = useRef<Map<string, number>>(new Map()); 
   const nextMetronomeTimeRef = useRef(0);
   const metronomeBeatRef = useRef(0);
   const lastVisualBeatRef = useRef(-1);
@@ -170,9 +232,45 @@ export default function App() {
   const currentSongStepIdxRef = useRef<number>(0);
   const tempoRef = useRef(tempo);
   const isMetronomeEnabledRef = useRef(isMetronomeEnabled);
+  const currentPassRef = useRef(currentPass);
+  const recordingTargetPatternIdRef = useRef<string | null>(null);
+  const activeRecordingTakeRef = useRef<RecordingTake | null>(null);
+  const completedRecordingTakesRef = useRef<RecordingTake[]>([]);
+  const quantizedCaptureKeysRef = useRef<Set<string>>(new Set());
+  const freeTimingCaptureTimesRef = useRef<Map<string, number>>(new Map());
+
+  const clearFileOperationTimeout = useCallback(() => {
+    if (fileOperationTimeoutRef.current !== null) {
+      window.clearTimeout(fileOperationTimeoutRef.current);
+      fileOperationTimeoutRef.current = null;
+    }
+  }, []);
+
+  const showFileOperation = useCallback((next: FileOperationState) => {
+    clearFileOperationTimeout();
+    setFileOperation(next);
+  }, [clearFileOperationTimeout]);
+
+  const updateFileOperation = useCallback((patch: Partial<FileOperationState>) => {
+    setFileOperation(prev => prev ? { ...prev, ...patch } : prev);
+  }, []);
+
+  const finishFileOperation = useCallback((detail = 'Done') => {
+    clearFileOperationTimeout();
+    setFileOperation(prev => prev ? {
+      ...prev,
+      detail,
+      progress: prev.indeterminate ? null : 1,
+    } : prev);
+    fileOperationTimeoutRef.current = window.setTimeout(() => {
+      setFileOperation(null);
+      fileOperationTimeoutRef.current = null;
+    }, 900);
+  }, [clearFileOperationTimeout]);
 
   useEffect(() => { padsRef.current = pads; }, [pads]);
   useEffect(() => { patternsRef.current = patterns; }, [patterns]);
+  useEffect(() => () => clearFileOperationTimeout(), [clearFileOperationTimeout]);
   useEffect(() => { samplesRef.current = samples; }, [samples]);
   useEffect(() => { transportRef.current = transport; }, [transport]);
   useEffect(() => { isSongModeRef.current = isSongMode; }, [isSongMode]);
@@ -184,6 +282,7 @@ export default function App() {
   useEffect(() => { currentSongStepIdxRef.current = currentSongStepIdx; }, [currentSongStepIdx]);
   useEffect(() => { tempoRef.current = tempo; }, [tempo]);
   useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
+  useEffect(() => { currentPassRef.current = currentPass; }, [currentPass]);
 
   // Apply theme colors via CSS custom properties
   // Only need to set 2 base colors - all other colors derive automatically
@@ -426,6 +525,72 @@ export default function App() {
 
   const getBeatDuration = () => 60 / tempoRef.current;
   const getPatternDuration = (p: Pattern) => getBeatDuration() * BEATS_PER_BAR * p.bars;
+  const resetRecordingCaptureState = useCallback(() => {
+    quantizedCaptureKeysRef.current.clear();
+    freeTimingCaptureTimesRef.current.clear();
+  }, []);
+
+  const resolveCurrentRecordingTargetId = useCallback(() => {
+    return resolveRecordingTargetPatternId(
+      isSongModeRef.current,
+      currentPatternIdRef.current,
+      arrangementBanksRef.current,
+      activeArrIdxRef.current,
+      currentSongStepIdxRef.current
+    );
+  }, []);
+
+  const startRecordingTake = useCallback(() => {
+    const targetPatternId = resolveCurrentRecordingTargetId();
+    if (!targetPatternId) {
+      showWarning('Recording unavailable', 'Arm a pattern for this section before recording.');
+      return false;
+    }
+
+    const targetPatternExists = patternsRef.current.some((pattern) => pattern.id === targetPatternId);
+    if (!targetPatternExists) {
+      showWarning('Recording target missing', 'Select a valid pattern before recording.');
+      return false;
+    }
+
+    recordingTargetPatternIdRef.current = targetPatternId;
+    activeRecordingTakeRef.current = createRecordingTake(targetPatternId, currentPassRef.current, audioEngine.ctx.currentTime);
+    resetRecordingCaptureState();
+    return true;
+  }, [resetRecordingCaptureState, resolveCurrentRecordingTargetId]);
+
+  const finishRecordingTake = useCallback(() => {
+    const activeTake = activeRecordingTakeRef.current;
+    if (activeTake && activeTake.hitIds.length > 0) {
+      completedRecordingTakesRef.current.push(activeTake);
+    }
+    activeRecordingTakeRef.current = null;
+    recordingTargetPatternIdRef.current = null;
+    resetRecordingCaptureState();
+  }, [resetRecordingCaptureState]);
+
+  const undoLastRecordingTake = useCallback(() => {
+    const activeTake = activeRecordingTakeRef.current;
+    const takeToUndo = activeTake && activeTake.hitIds.length > 0
+      ? activeTake
+      : completedRecordingTakesRef.current.pop() ?? null;
+
+    if (!takeToUndo) {
+      return false;
+    }
+
+    setPatterns((prev) => removeTakeFromPatterns(prev, takeToUndo));
+
+    if (takeToUndo === activeTake) {
+      const targetPatternId = recordingTargetPatternIdRef.current;
+      activeRecordingTakeRef.current = targetPatternId
+        ? createRecordingTake(targetPatternId, currentPassRef.current, audioEngine.ctx.currentTime)
+        : null;
+      resetRecordingCaptureState();
+    }
+
+    return true;
+  }, [resetRecordingCaptureState]);
 
   const currentArrangement = useMemo(() => arrangementBanks[activeArrIdx] || [], [arrangementBanks, activeArrIdx]);
 
@@ -480,7 +645,7 @@ export default function App() {
     return () => {
       // Stop scheduler
       if (timerIDRef.current) {
-        cancelAnimationFrame(timerIDRef.current);
+        clearTimeout(timerIDRef.current);
         timerIDRef.current = null;
       }
       // Clean up all pad timeout timers
@@ -576,7 +741,14 @@ export default function App() {
 
     let trigger: TriggerInfo;
     try {
-      trigger = audioEngine.playPad(sample.buffer, pad, offsetOverride, contextId, looping);
+      trigger = audioEngine.playPad(
+        sample.buffer,
+        pad,
+        offsetOverride,
+        contextId,
+        looping,
+        PREVIEW_PLAYBACK_GAIN_SCALE
+      );
     } catch (err) {
       showError(
         `Failed to play pad ${padId}`,
@@ -593,7 +765,9 @@ export default function App() {
     
     if (offsetOverride !== undefined) {
       previewSourceRef.current = trigger.source;
-      trigger.source.onended = () => {
+      const previousOnEnded = trigger.source.onended;
+      trigger.source.onended = (event) => {
+        previousOnEnded?.call(trigger.source, event);
         if (previewSourceRef.current === trigger.source) {
           previewSourceRef.current = null;
           setPreviewActive(false);
@@ -605,28 +779,36 @@ export default function App() {
     if (transportRef.current === TransportStatus.RECORDING && offsetOverride === undefined) {
       const beatDur = getBeatDuration();
       const now = audioEngine.ctx.currentTime;
-      
-      let targetPatternId = currentPatternIdRef.current;
-      if (isSongModeRef.current) {
-        const step = arrangementBanksRef.current[activeArrIdxRef.current][currentSongStepIdxRef.current];
-        if (step && step.armedPatternId) targetPatternId = step.armedPatternId;
-      }
+      const targetPatternId = recordingTargetPatternIdRef.current ?? resolveCurrentRecordingTargetId();
 
       const targetPattern = patternsRef.current.find(p => p.id === targetPatternId);
-      if (!targetPattern) return;
+      if (!targetPattern || !targetPatternId) {
+        transportRef.current = TransportStatus.PLAYING;
+        setTransport(TransportStatus.PLAYING);
+        finishRecordingTake();
+        showWarning('Recording stopped', 'The recording target is no longer available.');
+        return;
+      }
 
       const pDur = getPatternDuration(targetPattern);
       const timeInStep = now - sectionStartTimeRef.current;
       const relativeTimeInLoop = timeInStep % pDur;
-      
-      let rawBeatOffset = relativeTimeInLoop / beatDur;
-      let finalBeatOffset = rawBeatOffset;
+      const rawBeatOffset = relativeTimeInLoop / beatDur;
+      const finalBeatOffset = quantizeBeatOffset(rawBeatOffset, quantizeMode, targetPattern.bars * BEATS_PER_BAR);
 
+      const captureNow = performance.now();
       if (quantizeMode !== 'none') {
-        const grid = quantizeMode === '1/8' ? 0.5 : 0.25;
-        finalBeatOffset = Math.round(rawBeatOffset / grid) * grid;
-        const maxBeats = targetPattern.bars * BEATS_PER_BAR;
-        if (finalBeatOffset >= maxBeats) finalBeatOffset = maxBeats - 0.0001; 
+        const quantizedKey = buildQuantizedCaptureKey(targetPatternId, padId, currentPassRef.current, finalBeatOffset);
+        if (quantizedCaptureKeysRef.current.has(quantizedKey)) {
+          return;
+        }
+        quantizedCaptureKeysRef.current.add(quantizedKey);
+      } else {
+        const freeTimingKey = buildFreeTimingCaptureKey(targetPatternId, padId, currentPassRef.current);
+        if (isDuplicateFreeTimingCapture(freeTimingKey, captureNow, freeTimingCaptureTimesRef.current)) {
+          return;
+        }
+        freeTimingCaptureTimesRef.current.set(freeTimingKey, captureNow);
       }
       
       const newHit: LoopHit = { 
@@ -634,20 +816,14 @@ export default function App() {
         padId, 
         beatOffset: finalBeatOffset, 
         originalBeatOffset: rawBeatOffset, 
-        pass: currentPass 
+        pass: currentPassRef.current
       };
-      
-      setPatterns(prev => prev.map(p => {
-        if (p.id === targetPatternId) {
-          const newHits = [...p.hits, newHit];
-          // Limit hits to prevent unbounded memory growth - keep only the most recent hits
-          const limitedHits = newHits.length > MAX_HITS_PER_PATTERN 
-            ? newHits.slice(-MAX_HITS_PER_PATTERN)
-            : newHits;
-          return { ...p, hits: limitedHits };
-        }
-        return p;
-      }));
+
+      if (activeRecordingTakeRef.current) {
+        activeRecordingTakeRef.current = appendHitToTake(activeRecordingTakeRef.current, newHit.id);
+      }
+
+      setPatterns((prev) => appendHitToPattern(prev, targetPatternId, newHit, MAX_HITS_PER_PATTERN));
     }
 
     setActivePadIds(prev => new Set(prev).add(padId));
@@ -669,7 +845,7 @@ export default function App() {
     }, 80);
     
     activePadTimeoutRefs.current.set(padId, timeoutId);
-  }, [currentPass, quantizeMode, killAllAudio, stopPreview, stopRegularPadPlayback]);
+  }, [finishRecordingTake, quantizeMode, resolveCurrentRecordingTargetId, stopPreview, stopRegularPadPlayback]);
 
   const toggleTheme = useCallback(() => {
     setTheme(prev => {
@@ -685,81 +861,73 @@ export default function App() {
 
   const scheduler = useCallback(() => {
     if (transportRef.current === TransportStatus.STOPPED) {
-        if (timerIDRef.current) cancelAnimationFrame(timerIDRef.current);
+        if (timerIDRef.current) clearTimeout(timerIDRef.current);
         timerIDRef.current = null;
         return;
     }
 
     const now = audioEngine.ctx.currentTime;
     const beatDur = getBeatDuration();
-    
-    let playingPatterns: Pattern[] = [];
-    let stepTotalDur = 0;
+    const isHidden = document.hidden;
 
-    if (isSongModeRef.current) {
-      const arrangement = arrangementBanksRef.current[activeArrIdxRef.current];
-      const step = arrangement[currentSongStepIdxRef.current];
-      if (!step) { toggleTransportRef.current(); return; }
-      playingPatterns = step.activePatternIds.map(id => patternsRef.current.find(p => p.id === id)).filter(Boolean) as Pattern[];
-      const baseDur = playingPatterns.reduce((max, p) => Math.max(max, getPatternDuration(p)), 0);
-      stepTotalDur = baseDur * step.repeats;
-    } else {
-      const p = patternsRef.current.find(pat => pat.id === currentPatternIdRef.current) || patternsRef.current[0];
-      playingPatterns = [p];
-      stepTotalDur = getPatternDuration(p);
-    }
+    // Hidden tabs get a larger lookahead because browser timers are throttled in the background.
+    const lookAhead = isHidden
+      ? Math.max(2, Math.min(4, beatDur * 8))
+      : Math.max(0.1, Math.min(0.5, beatDur * 2));
+    const arrangement = arrangementBanksRef.current[activeArrIdxRef.current] || [];
+    const frame = computeSchedulerFrame({
+      now,
+      lookAhead,
+      windowStart: lastScheduledTimeRef.current,
+      beatDuration: beatDur,
+      isSongMode: isSongModeRef.current,
+      isSectionLoopActive: isSectionLoopActiveRef.current,
+      currentSongStepIdx: currentSongStepIdxRef.current,
+      currentPatternId: currentPatternIdRef.current,
+      sectionStartTime: sectionStartTimeRef.current,
+      currentPass: currentPassRef.current,
+      arrangement,
+      patterns: patternsRef.current,
+      beatsPerBar: BEATS_PER_BAR,
+    });
 
-    const elapsedInStep = now - sectionStartTimeRef.current;
-    const currentBaseDur = playingPatterns.reduce((max, p) => Math.max(max, getPatternDuration(p)), 0);
-    
-    // Protection against division by zero - recover gracefully
-    if (currentBaseDur <= 0 || beatDur <= 0) {
+    // Protection against invalid timing state - recover gracefully
+    if (!frame || frame.playback.baseDuration <= 0 || beatDur <= 0) {
       // Invalid state - stop transport to prevent infinite loop
       if (transportRef.current !== TransportStatus.STOPPED) {
         toggleTransportRef.current();
         showWarning("Playback stopped", "Invalid pattern or tempo detected");
       }
       if (timerIDRef.current) {
-        cancelAnimationFrame(timerIDRef.current);
+        clearTimeout(timerIDRef.current);
         timerIDRef.current = null;
       }
       return;
     }
 
-    const exactVisualBeat = Math.floor((elapsedInStep % currentBaseDur) / beatDur);
-    if (exactVisualBeat !== lastVisualBeatRef.current) {
-        lastVisualBeatRef.current = exactVisualBeat;
+    if (frame.currentSongStepIdx !== currentSongStepIdxRef.current) {
+      currentSongStepIdxRef.current = frame.currentSongStepIdx;
+      setCurrentSongStepIdx(frame.currentSongStepIdx);
+    }
+    if (frame.currentPass !== currentPassRef.current) {
+      currentPassRef.current = frame.currentPass;
+      setCurrentPass(frame.currentPass);
+    }
+    sectionStartTimeRef.current = frame.sectionStartTime;
+
+    if (frame.exactVisualBeat !== lastVisualBeatRef.current) {
+        lastVisualBeatRef.current = frame.exactVisualBeat;
         beatIndicatorRefs.current.forEach((ref, idx) => {
             if (!ref) return;
             const isDownbeat = idx % BEATS_PER_BAR === 0;
-            if (idx === exactVisualBeat) ref.style.backgroundColor = 'var(--color-fg)';
+            if (idx === frame.exactVisualBeat) ref.style.backgroundColor = 'var(--color-fg)';
             else ref.style.backgroundColor = isDownbeat ? 'var(--color-downbeat-indicator)' : 'var(--color-beat-indicator)';
         });
     }
 
-    if (elapsedInStep >= stepTotalDur) {
-      if (isSongModeRef.current && !isSectionLoopActiveRef.current) {
-        const arrangement = arrangementBanksRef.current[activeArrIdxRef.current];
-        const nextIdx = (currentSongStepIdxRef.current + 1) % arrangement.length;
-        setCurrentSongStepIdx(nextIdx);
-        currentSongStepIdxRef.current = nextIdx;
-      }
-      const newSectionStart = sectionStartTimeRef.current + stepTotalDur;
-      sectionStartTimeRef.current = newSectionStart;
-      // Reset scheduling window to new section start to catch all hits from the beginning
-      lastScheduledTimeRef.current = newSectionStart - 0.001;
-      lastScheduledHitIdsRef.current.clear();
-      setCurrentPass(p => p + 1);
-    }
-
-    if (progressBarRef.current) progressBarRef.current.style.width = `${Math.min(100, (elapsedInStep / stepTotalDur) * 100)}%`;
+    if (progressBarRef.current) progressBarRef.current.style.width = `${Math.min(100, frame.progressRatio * 100)}%`;
     // FIX: Apply modulo to current time to ensure it wraps correctly during loops for both Song and Pattern mode
     setCurrentSongTime(totalSongDuration > 0 ? (now - songStartTimeRef.current) % totalSongDuration : 0);
-
-    // Tempo-aware lookahead: ensure we can schedule at least 2 beats ahead
-    // At high BPM, fixed 200ms may not cover one beat, causing missed triggers
-    // Minimum 100ms for system stability, maximum 500ms to prevent excessive scheduling
-    const lookAhead = Math.max(0.1, Math.min(0.5, beatDur * 2));
     
     while (nextMetronomeTimeRef.current < now + lookAhead) {
         if (isMetronomeEnabledRef.current) audioEngine.playMetronome(nextMetronomeTimeRef.current, metronomeBeatRef.current % BEATS_PER_BAR === 0);
@@ -767,88 +935,80 @@ export default function App() {
         metronomeBeatRef.current++;
     }
 
-    // Clean up old scheduled hit IDs periodically to prevent unbounded growth
-    if (lastScheduledHitIdsRef.current.size > 1000) {
-      lastScheduledHitIdsRef.current.clear();
-    }
-
-    // Track the latest scheduled hit time to ensure we don't miss hits after loops
-    let latestScheduledTime = lastScheduledTimeRef.current;
-
-    playingPatterns.forEach(pattern => {
-      const pDur = getPatternDuration(pattern);
-      if (pDur <= 0) return; // Skip invalid patterns
-      if (!lastScheduledHitIdsRef.current.has(pattern.id)) lastScheduledHitIdsRef.current.set(pattern.id, new Set());
-      const scheduledSet = lastScheduledHitIdsRef.current.get(pattern.id)!;
-
-      pattern.hits.forEach(hit => {
-        const iterationInPattern = Math.floor(elapsedInStep / pDur);
-        const hitAbsoluteTime = sectionStartTimeRef.current + (iterationInPattern * pDur) + (hit.beatOffset * beatDur);
-        const hitKey = `${hit.id}_${iterationInPattern}`;
-
-        if (hitAbsoluteTime >= lastScheduledTimeRef.current && hitAbsoluteTime < now + lookAhead && !scheduledSet.has(hitKey)) {
-          const pad = padsRef.current.find(p => p.id === hit.padId);
-          if (!isValidPad(pad)) return;
-          const sample = samplesRef.current.find(s => s.id === pad!.sampleId);
-          if (sample) {
-            try {
-              audioEngine.playPadScheduled(sample.buffer, pad!, hitAbsoluteTime, pattern.id);
-              
-              // Update latest scheduled time to ensure we don't regress
-              latestScheduledTime = Math.max(latestScheduledTime, hitAbsoluteTime);
-              
-              // Schedule visual feedback to flash the pad at the exact trigger time
-              const delayMs = Math.max(0, (hitAbsoluteTime - now) * 1000);
-              setTimeout(() => {
-                setActivePadIds(prev => new Set(prev).add(hit.padId));
-                setTimeout(() => setActivePadIds(prev => {
-                  const next = new Set(prev);
-                  next.delete(hit.padId);
-                  return next;
-                }), 80);
-              }, delayMs);
-            } catch (e) {
-              // Critical: scheduling failure means audio won't play - user must know
-              showError(
-                `Failed to play sample on pad ${pad!.id}`,
-                "The sample may be corrupted or the audio system is unavailable. Try reloading the sample."
-              );
-            }
-          }
-          scheduledSet.add(hitKey);
-        }
-      });
+    const dedupeCutoff = now - Math.max(lookAhead, beatDur * BEATS_PER_BAR * 2);
+    scheduledHitKeysRef.current.forEach((scheduledTime, dedupeKey) => {
+      if (scheduledTime < dedupeCutoff) {
+        scheduledHitKeysRef.current.delete(dedupeKey);
+      }
     });
 
-    // Update lastScheduledTime to track scheduling progress
-    // Use the latest scheduled hit time if any hits were scheduled
-    // Otherwise, advance to prevent rescheduling past events while maintaining lookahead window
-    // This ensures hits at section start are never skipped, even when scheduler runs slightly late
-    if (latestScheduledTime > lastScheduledTimeRef.current) {
-      // We scheduled some hits - track the latest one
-      lastScheduledTimeRef.current = latestScheduledTime;
-    } else {
-      // No new hits scheduled - advance window to prevent rescheduling past events
-      // But keep it before 'now' to maintain lookahead for future scheduler ticks
-      lastScheduledTimeRef.current = Math.max(lastScheduledTimeRef.current, now - lookAhead);
-    }
-    timerIDRef.current = requestAnimationFrame(scheduler);
-  }, [killAllAudio, totalSongDuration]);
+    frame.scheduledHits.forEach((scheduledHit) => {
+      const previousScheduledTime = scheduledHitKeysRef.current.get(scheduledHit.dedupeKey);
+      if (previousScheduledTime !== undefined && previousScheduledTime >= dedupeCutoff) {
+        return;
+      }
+
+      const pad = padsRef.current.find(p => p.id === scheduledHit.hit.padId);
+      if (!isValidPad(pad)) {
+        return;
+      }
+
+      const sample = samplesRef.current.find(s => s.id === pad!.sampleId);
+      if (!sample) {
+        return;
+      }
+
+      try {
+        const playbackTime = Math.max(now, scheduledHit.absoluteTime);
+        audioEngine.playPadScheduled(sample.buffer, pad!, playbackTime, scheduledHit.patternId);
+
+        const delayMs = Math.max(0, (playbackTime - now) * 1000);
+        setTimeout(() => {
+          setActivePadIds(prev => new Set(prev).add(scheduledHit.hit.padId));
+          setTimeout(() => setActivePadIds(prev => {
+            const next = new Set(prev);
+            next.delete(scheduledHit.hit.padId);
+            return next;
+          }), 80);
+        }, delayMs);
+      } catch (e) {
+        showError(
+          `Failed to play sample on pad ${pad!.id}`,
+          "The sample may be corrupted or the audio system is unavailable. Try reloading the sample."
+        );
+      }
+
+      scheduledHitKeysRef.current.set(scheduledHit.dedupeKey, scheduledHit.absoluteTime);
+    });
+
+    lastScheduledTimeRef.current = Math.max(lastScheduledTimeRef.current, now);
+    timerIDRef.current = window.setTimeout(
+      scheduler,
+      isHidden ? HIDDEN_SCHEDULER_TICK_MS : SCHEDULER_TICK_MS
+    );
+  }, [totalSongDuration]);
 
   // Handle page visibility changes - ensure audio continues during live performance
   useEffect(() => {
     const handleVisibilityChange = () => {
+      if (transportRef.current === TransportStatus.STOPPED) {
+        return;
+      }
+
       if (!document.hidden) {
-        // Tab became visible: ensure AudioContext is running and resume scheduler if needed
+        // Tab became visible: ensure AudioContext is running and resume scheduler if needed.
         audioEngine.ctx.resume().catch(() => {
           // Autoplay policy may prevent resume until user gesture - this is expected
           // Audio will resume automatically on next user interaction (pad click, transport, etc.)
         });
-        if (transportRef.current !== TransportStatus.STOPPED && !timerIDRef.current) {
-          scheduler();
-        }
       }
-      // Do NOT pause scheduler when hidden - audio must continue for live performance
+
+      if (timerIDRef.current) {
+        clearTimeout(timerIDRef.current);
+        timerIDRef.current = null;
+      }
+
+      scheduler();
     };
     
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -901,10 +1061,13 @@ export default function App() {
     const isSongPlaying = transportRef.current !== TransportStatus.STOPPED;
 
     if (isSongPlaying) {
+      if (transportRef.current === TransportStatus.RECORDING) {
+        finishRecordingTake();
+      }
       transportRef.current = TransportStatus.STOPPED;
       setTransport(TransportStatus.STOPPED);
       killAllAudio();
-      if (timerIDRef.current) cancelAnimationFrame(timerIDRef.current);
+      if (timerIDRef.current) clearTimeout(timerIDRef.current);
       timerIDRef.current = null;
       setCurrentSongTime(0); 
       setCurrentSongStepIdx(0);
@@ -918,7 +1081,7 @@ export default function App() {
       // Release wake lock when stopped
       releaseWakeLock();
     } else {
-      if (timerIDRef.current) cancelAnimationFrame(timerIDRef.current);
+      if (timerIDRef.current) clearTimeout(timerIDRef.current);
       timerIDRef.current = null;
       
       killAllAudio();
@@ -933,28 +1096,56 @@ export default function App() {
       const headStart = 0.05;
       const startPoint = now + headStart;
 
+      const startStepIdx = isSongModeRef.current && !isSectionLoopActiveRef.current ? 0 : currentSongStepIdxRef.current;
+
       songStartTimeRef.current = startPoint;
       sectionStartTimeRef.current = startPoint; 
       lastScheduledTimeRef.current = startPoint - 0.001; 
       nextMetronomeTimeRef.current = startPoint; 
       metronomeBeatRef.current = 0;
       lastVisualBeatRef.current = -1;
-      lastScheduledHitIdsRef.current.clear();
-      currentSongStepIdxRef.current = currentSongStepIdx;
+      scheduledHitKeysRef.current.clear();
+      currentSongStepIdxRef.current = startStepIdx;
+      setCurrentSongStepIdx(startStepIdx);
+      currentPassRef.current = 0;
       setCurrentPass(0);
       
       transportRef.current = TransportStatus.PLAYING;
       setTransport(TransportStatus.PLAYING);
       scheduler();
     }
-  }, [killAllAudio, scheduler, currentSongStepIdx, stopPreview, stopRegularPadPlayback]);
+  }, [finishRecordingTake, killAllAudio, scheduler, currentSongStepIdx, stopPreview, stopRegularPadPlayback]);
 
   useEffect(() => { toggleTransportRef.current = toggleTransport; }, [toggleTransport]);
 
-  const toggleRecord = () => {
-    if (transport === TransportStatus.STOPPED) toggleTransport();
-    setTransport(prev => prev === TransportStatus.RECORDING ? TransportStatus.PLAYING : TransportStatus.RECORDING);
-  };
+  const toggleRecord = useCallback(() => {
+    if (transportRef.current === TransportStatus.RECORDING) {
+      finishRecordingTake();
+      transportRef.current = TransportStatus.PLAYING;
+      setTransport(TransportStatus.PLAYING);
+      return;
+    }
+
+    if (!startRecordingTake()) {
+      return;
+    }
+
+    if (transportRef.current === TransportStatus.STOPPED) {
+      if (previewSourceRef.current || previewActiveRef.current) {
+        stopPreview();
+      }
+      if (lastTriggerInfoRef.current) {
+        stopRegularPadPlayback();
+      }
+      toggleTransport();
+      transportRef.current = TransportStatus.RECORDING;
+      setTransport(TransportStatus.RECORDING);
+      return;
+    }
+
+    transportRef.current = TransportStatus.RECORDING;
+    setTransport(TransportStatus.RECORDING);
+  }, [finishRecordingTake, startRecordingTake, stopPreview, stopRegularPadPlayback, toggleTransport]);
 
   const createNewPattern = () => {
     const newP = { id: randomUUID(), name: `Pattern ${patterns.length + 1}`, bars: DEFAULT_PATTERN_BARS, hits: [] };
@@ -1033,9 +1224,18 @@ export default function App() {
     }
   };
 
-  const saveProject = async () => {
+  const saveProject = async (projectName: string) => {
+    const fileStem = normalizeFileStem(projectName, buildDefaultName('XEHPA_Project'));
     try {
+      showFileOperation({
+        kind: 'save-project',
+        title: 'SAVE PROJECT',
+        detail: 'Collecting project data',
+        progress: 0.08,
+        indeterminate: false,
+      });
       const dbSamples = await getAllSamples();
+      updateFileOperation({ detail: 'Preparing archive', progress: 0.2 });
       
       // Load JSZip
       const JSZip = await loadJSZip();
@@ -1059,21 +1259,102 @@ export default function App() {
       zip.file('project.json', JSON.stringify(projectMetadata, null, 2));
       
       // Add all samples as binary .wav files in samples folder
-      for (const sample of dbSamples) {
+      for (let i = 0; i < dbSamples.length; i++) {
+        const sample = dbSamples[i];
         zip.file(`samples/${sample.id}.wav`, sample.data);
+        const sampleProgress = dbSamples.length > 0 ? (i + 1) / dbSamples.length : 1;
+        updateFileOperation({
+          detail: dbSamples.length > 0 ? `Packing samples ${i + 1}/${dbSamples.length}` : 'No embedded samples',
+          progress: 0.2 + (sampleProgress * 0.45),
+        });
       }
       
       // Generate ZIP blob and download
+      updateFileOperation({ detail: 'Finalizing file', progress: 0.72 });
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const a = document.createElement('a'); 
-      a.href = URL.createObjectURL(zipBlob); 
-      a.download = `XEHPA_Project_${new Date().getTime()}.fck`; 
-      a.click();
+      updateFileOperation({ detail: 'Starting download', progress: 0.94 });
+      triggerDownload(zipBlob, `${fileStem}.fck`);
+      finishFileOperation('Project saved');
     } catch (err) {
+      setFileOperation(null);
       showError(
         "Failed to save project",
         err instanceof Error ? err.message : "An unknown error occurred. Try again."
       );
+    }
+  };
+
+  const exportWav = async (projectName: string) => {
+    const fileStem = normalizeFileStem(projectName, buildDefaultName('XEHPA_Export'));
+    try {
+      showFileOperation({
+        kind: 'export-wav',
+        title: 'EXPORT WAV',
+        detail: 'Preparing render',
+        progress: 0.04,
+        indeterminate: false,
+      });
+      const blob = await audioEngine.exportWAV(
+        currentArrangement,
+        patterns,
+        tempo,
+        pads,
+        samples,
+        (progress, detail) => {
+          updateFileOperation({
+            progress,
+            detail: detail ?? 'Rendering WAV',
+          });
+        }
+      );
+      updateFileOperation({ detail: 'Starting download', progress: 0.96 });
+      triggerDownload(blob, `${fileStem}.wav`);
+      finishFileOperation('WAV exported');
+    } catch (error) {
+      setFileOperation(null);
+      showError(
+        'Export failed',
+        error instanceof Error ? error.message : 'An unknown error occurred during export.'
+      );
+    }
+  };
+
+  const exportStems = async (projectName: string) => {
+    const fileStem = normalizeFileStem(projectName, buildDefaultName('XEHPA_Stems'));
+    if (isExportingStems) return;
+    setIsExportingStems(true);
+    try {
+      showFileOperation({
+        kind: 'export-stems',
+        title: 'EXPORT STEMS',
+        detail: 'Preparing stems',
+        progress: 0.04,
+        indeterminate: false,
+      });
+      const blob = await audioEngine.exportStems(
+        currentArrangement,
+        patterns,
+        tempo,
+        pads,
+        samples,
+        (progress, detail) => {
+          updateFileOperation({
+            progress,
+            detail: detail ?? 'Rendering stems',
+          });
+        }
+      );
+      updateFileOperation({ detail: 'Starting download', progress: 0.96 });
+      triggerDownload(blob, `${fileStem}.zip`);
+      finishFileOperation('Stems exported');
+    } catch (error) {
+      setFileOperation(null);
+      showError(
+        'Export failed',
+        error instanceof Error ? error.message : 'An unknown error occurred during export.'
+      );
+    } finally {
+      setIsExportingStems(false);
     }
   };
 
@@ -1099,7 +1380,7 @@ export default function App() {
       killAllAudio();
       setTransport(TransportStatus.STOPPED);
       if (timerIDRef.current) {
-        cancelAnimationFrame(timerIDRef.current);
+        clearTimeout(timerIDRef.current);
         timerIDRef.current = null;
       }
     }
@@ -1162,7 +1443,7 @@ export default function App() {
       );
       
       if (shouldSave) {
-        await saveProject();
+        await saveProject(buildDefaultName('XEHPA_Project'));
         // Give a small delay for the download to start
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -1170,6 +1451,53 @@ export default function App() {
     
     await createNewProject();
   }, [hasUnsavedChanges, saveProject, createNewProject]);
+
+  const openSaveDialog = useCallback((kind: SaveFlowKind) => {
+    const dialogConfig = {
+      'save-project': {
+        kind: 'save-project',
+        title: 'Save project as',
+        confirmLabel: 'Save',
+        extension: '.fck',
+        defaultName: buildDefaultName('XEHPA_Project'),
+      },
+      'export-wav': {
+        kind: 'export-wav',
+        title: 'Export WAV as',
+        confirmLabel: 'Export',
+        extension: '.wav',
+        defaultName: buildDefaultName('XEHPA_Export'),
+      },
+      'export-stems': {
+        kind: 'export-stems',
+        title: 'Export stems as',
+        confirmLabel: 'Export',
+        extension: '.zip',
+        defaultName: buildDefaultName('XEHPA_Stems'),
+      },
+    } satisfies Record<SaveFlowKind, NonNullable<SaveDialogState>>;
+
+    const nextDialog = dialogConfig[kind];
+    setSaveDialog(nextDialog);
+    setSaveNameInput(nextDialog.defaultName);
+  }, []);
+
+  const submitSaveDialog = useCallback(async () => {
+    if (!saveDialog) return;
+    const chosenName = normalizeFileStem(saveNameInput, saveDialog.defaultName);
+    const activeKind = saveDialog.kind;
+    setSaveDialog(null);
+
+    if (activeKind === 'save-project') {
+      await saveProject(chosenName);
+      return;
+    }
+    if (activeKind === 'export-wav') {
+      await exportWav(chosenName);
+      return;
+    }
+    await exportStems(chosenName);
+  }, [exportStems, exportWav, saveDialog, saveNameInput, saveProject]);
 
   const loadProject = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -1183,13 +1511,20 @@ export default function App() {
       );
       
       if (shouldSave) {
-        await saveProject();
+        await saveProject(buildDefaultName('XEHPA_Project'));
         // Give a small delay for the download to start
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
     
     setIsProjectLoading(true);
+    showFileOperation({
+      kind: 'load-project',
+      title: 'LOAD PROJECT',
+      detail: `Opening ${file.name}`,
+      progress: 0.05,
+      indeterminate: false,
+    });
     
     // Check if file is ZIP (new format) or JSON (old format)
     // ZIP files start with PK (0x504B), JSON starts with {
@@ -1216,6 +1551,7 @@ export default function App() {
     try {
       if (fileStart === 'zip') {
         // New ZIP format
+        updateFileOperation({ detail: 'Reading project archive', progress: 0.14 });
         const JSZip = await loadJSZip();
         const zip = await JSZip.loadAsync(file);
         
@@ -1243,6 +1579,7 @@ export default function App() {
         } catch (err) {
           console.error("Failed to clear existing samples:", err);
         }
+        updateFileOperation({ detail: 'Applying project data', progress: 0.22 });
         
         // Load samples from ZIP samples folder
         if (migratedData.samples && Array.isArray(migratedData.samples)) {
@@ -1281,6 +1618,11 @@ export default function App() {
               const buffer = await audioEngine.decode(dataCopy);
               const createdAt = baseTime - i;
               await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
+              const sampleProgress = (i + 1) / migratedData.samples.length;
+              updateFileOperation({
+                detail: `Loading samples ${i + 1}/${migratedData.samples.length}`,
+                progress: 0.22 + (sampleProgress * 0.58),
+              });
             } catch (sampleErr) {
               showWarning(
                 `Failed to load sample "${s.name}"`,
@@ -1291,6 +1633,7 @@ export default function App() {
         }
         
         // Apply migrated and validated data
+        updateFileOperation({ detail: 'Refreshing session', progress: 0.88 });
         setPads(migratedData.pads || []); 
         setPatterns(migratedData.patterns || []); 
         setArrangementBanks(migratedData.arrangementBanks || []); 
@@ -1310,6 +1653,7 @@ export default function App() {
         }
         
         await loadSamplesFromDB();
+        finishFileOperation('Project loaded');
         
         // Show migration notice if version was updated
         const originalVersion = rawData.version || 'unknown';
@@ -1324,6 +1668,7 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = async (ev) => {
           try {
+            updateFileOperation({ detail: 'Reading legacy project', progress: 0.14 });
             const rawData = JSON.parse(ev.target?.result as string);
             
             // Migrate project to current version (handles old formats automatically)
@@ -1341,6 +1686,7 @@ export default function App() {
             } catch (err) {
               console.error("Failed to clear existing samples:", err);
             }
+            updateFileOperation({ detail: 'Applying project data', progress: 0.22 });
             
             // Load samples if present
             if (migratedData.samples && Array.isArray(migratedData.samples)) {
@@ -1376,6 +1722,11 @@ export default function App() {
                   // Subsequent samples get progressively older timestamps
                   const createdAt = baseTime - i;
                   await saveSample(s.id, s.name, sampleData, 0, buffer.duration, createdAt);
+                  const sampleProgress = (i + 1) / migratedData.samples.length;
+                  updateFileOperation({
+                    detail: `Loading samples ${i + 1}/${migratedData.samples.length}`,
+                    progress: 0.22 + (sampleProgress * 0.58),
+                  });
                 } catch (sampleErr) {
                   showWarning(
                     `Failed to load sample "${s.name}"`,
@@ -1386,6 +1737,7 @@ export default function App() {
             }
             
             // Apply migrated and validated data
+            updateFileOperation({ detail: 'Refreshing session', progress: 0.88 });
             setPads(migratedData.pads || []); 
             setPatterns(migratedData.patterns || []); 
             setArrangementBanks(migratedData.arrangementBanks || []); 
@@ -1405,6 +1757,7 @@ export default function App() {
             }
             
             await loadSamplesFromDB();
+            finishFileOperation('Project loaded');
             
             // Show migration notice if version was updated
             const originalVersion = rawData.version || 'unknown';
@@ -1415,6 +1768,7 @@ export default function App() {
             }
             setIsProjectLoading(false);
           } catch (err) {
+            setFileOperation(null);
             showError(
               "Failed to load project",
               err instanceof Error ? err.message : "The file may be corrupted or in an unsupported format."
@@ -1423,21 +1777,25 @@ export default function App() {
           }
         };
         reader.onerror = () => {
+          setFileOperation(null);
           setIsProjectLoading(false);
           alert("Failed to read project file.");
         };
         reader.readAsText(file);
+        e.target.value = '';
         return; // Early return - onload will handle completion
       } else {
         throw new Error('Not a valid XEHPA project file. Expected .fck format.');
       }
     } catch (err) {
+      setFileOperation(null);
       showError(
         "Failed to load project",
         err instanceof Error ? err.message : "The file may be corrupted or in an unsupported format."
       );
       setIsProjectLoading(false);
     }
+    e.target.value = '';
   };
 
   // Drag and Drop Handlers
@@ -1516,6 +1874,10 @@ export default function App() {
       }
       if (e.code === 'KeyT') { e.preventDefault(); handleTap(); }
       if (e.code === 'KeyM') { e.preventDefault(); setIsMetronomeEnabled(prev => !prev); }
+      if (e.code === 'KeyZ' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        e.preventDefault();
+        undoLastRecordingTake();
+      }
       
       if (e.altKey && e.metaKey) { e.preventDefault(); setIsSongMode(prev => !prev); }
       
@@ -1533,7 +1895,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap, selectedPadId, stopPreview, setSelectedPadId, setSelectedSampleId, toggleTheme]);
+  }, [triggerPad, activeBankIdx, toggleTransport, toggleRecord, handleTap, selectedPadId, stopPreview, setSelectedPadId, setSelectedSampleId, toggleTheme, undoLastRecordingTake]);
 
   // Audio analysis for reactive visuals - runs continuously to react to ALL audio
   // Blur buttons after mouse click to prevent spacebar from triggering them
@@ -1716,8 +2078,15 @@ export default function App() {
         setIsSectionLoopActive={setIsSectionLoopActive}
         setCurrentSongStepIdx={setCurrentSongStepIdx}
         handleNewProject={handleNewProject}
-        saveProject={saveProject}
+        openSaveDialog={openSaveDialog}
+        submitSaveDialog={submitSaveDialog}
+        saveDialog={saveDialog}
+        saveNameInput={saveNameInput}
+        setSaveNameInput={setSaveNameInput}
+        setSaveDialog={setSaveDialog}
+        fileOperation={fileOperation}
         loadProject={loadProject}
+        loadInputRef={loadInputRef}
         addSongStep={addSongStep}
         createNewPattern={createNewPattern}
         duplicatePattern={duplicatePattern}
@@ -1806,8 +2175,15 @@ const AppContent: React.FC<{
   setIsSectionLoopActive: (active: boolean) => void;
   setCurrentSongStepIdx: (idx: number) => void;
   handleNewProject: () => Promise<void>;
-  saveProject: () => Promise<void>;
+  openSaveDialog: (kind: SaveFlowKind) => void;
+  submitSaveDialog: () => Promise<void>;
+  saveDialog: SaveDialogState;
+  saveNameInput: string;
+  setSaveNameInput: (value: string) => void;
+  setSaveDialog: (dialog: SaveDialogState) => void;
+  fileOperation: FileOperationState | null;
   loadProject: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
+  loadInputRef: React.RefObject<HTMLInputElement | null>;
   addSongStep: () => void;
   createNewPattern: () => void;
   duplicatePattern: (id: string) => void;
@@ -1840,100 +2216,143 @@ const AppContent: React.FC<{
       {/* Dividers - reactive spectrum bars that respond to audio */}
       <Dividers />
       
-      {props.isProjectLoading && (
+      {props.saveDialog && (
         <div 
           style={{
             position: 'fixed',
             top: '50%',
             left: '50%',
             transform: 'translate(-50%, -50%)',
-            zIndex: 1000,
+            zIndex: 1001,
             backgroundColor: 'var(--color-bg)',
             border: '2px solid var(--color-border)',
-            padding: '20px 30px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px'
+            gap: '10px',
+            minWidth: '280px',
+            boxShadow: '0 0 0 1px color-mix(in srgb, var(--color-fg) 8%, transparent)'
           }}
         >
-          <p 
-            style={{
-              fontFamily: 'Barlow Condensed',
-              fontSize: '12px',
-              fontWeight: 500,
-              color: 'var(--color-text)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              margin: 0
-            }}
-          >
-            LOADING PROJECT...
-          </p>
-          <div 
-            style={{
-              width: '200px',
-              height: '2px',
-              backgroundColor: 'var(--color-scrollbar-thumb)',
-              overflow: 'hidden'
-            }}
-          >
-            <div 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '16px' }}>
+            <p 
               style={{
-                width: '100%',
-                height: '100%',
-                backgroundColor: 'var(--color-fg)'
+                fontFamily: 'Barlow Condensed',
+                fontSize: '12px',
+                fontWeight: 500,
+                color: 'var(--color-text)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                margin: 0
               }}
-            />
+            >
+              {props.saveDialog.title}
+            </p>
+          </div>
+          <input
+            autoFocus
+            value={props.saveNameInput}
+            onChange={(e) => props.setSaveNameInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                void props.submitSaveDialog();
+              } else if (e.key === 'Escape') {
+                props.setSaveDialog(null);
+              }
+            }}
+            style={{
+              height: '28px',
+              border: '2px solid var(--color-border)',
+              background: 'transparent',
+              color: 'var(--color-text)',
+              fontFamily: 'JetBrains Mono',
+              fontSize: '11px',
+              padding: '0 10px',
+              outline: 'none'
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => props.setSaveDialog(null)}
+                style={{
+                  minWidth: '64px',
+                  height: '22px',
+                  border: '2px solid var(--color-border)',
+                  color: 'var(--color-text)',
+                  fontFamily: 'Barlow Condensed',
+                  fontSize: '10px',
+                  textTransform: 'uppercase'
+                }}
+                className="hover:opacity-60 transition-opacity"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void props.submitSaveDialog()}
+                style={{
+                  minWidth: '64px',
+                  height: '22px',
+                  border: '2px solid var(--color-border)',
+                  background: 'var(--color-fg)',
+                  color: 'var(--color-bg)',
+                  fontFamily: 'Barlow Condensed',
+                  fontSize: '10px',
+                  textTransform: 'uppercase'
+                }}
+                className="hover:opacity-80 transition-opacity"
+              >
+                {props.saveDialog.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
-      
-      {/* Import Progress Indicator */}
-      {props.importProgress && (
-        <div 
+
+      {(props.fileOperation || props.importProgress) && (
+        <div
           style={{
             position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
+            top: '18px',
+            right: '18px',
             zIndex: 1000,
-            backgroundColor: 'var(--color-bg)',
-            border: '2px solid var(--color-border)',
-            padding: '20px 30px',
+            width: '240px',
+            backgroundColor: 'color-mix(in srgb, var(--color-bg) 88%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--color-fg) 18%, transparent)',
+            padding: '10px 12px',
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px'
+            gap: '8px',
+            backdropFilter: 'blur(8px)',
+            pointerEvents: 'none'
           }}
         >
-          <p 
-            style={{
-              fontFamily: 'Barlow Condensed',
-              fontSize: '12px',
-              fontWeight: 500,
-              color: 'var(--color-text)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              margin: 0
-            }}
-          >
-            PROCESSING {props.importProgress.current} OF {props.importProgress.total} FILES...
-          </p>
-          <div 
-            style={{
-              width: '200px',
-              height: '2px',
-              backgroundColor: 'var(--color-scrollbar-thumb)',
-              overflow: 'hidden'
-            }}
-          >
-            <div 
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline' }}>
+            <span style={{ fontFamily: 'Barlow Condensed', fontSize: '11px', color: 'var(--color-text)', letterSpacing: '0.08em' }}>
+              {props.fileOperation?.title ?? 'IMPORTING AUDIO'}
+            </span>
+            <span style={{ fontFamily: 'JetBrains Mono', fontSize: '10px', color: 'var(--color-muted)' }}>
+              {props.fileOperation?.progress !== null && props.fileOperation?.progress !== undefined
+                ? `${Math.round(props.fileOperation.progress * 100)}%`
+                : props.importProgress
+                  ? `${Math.round((props.importProgress.current / Math.max(props.importProgress.total, 1)) * 100)}%`
+                  : ''}
+            </span>
+          </div>
+          <span style={{ fontFamily: 'JetBrains Mono', fontSize: '10px', color: 'var(--color-muted)' }}>
+            {props.fileOperation?.detail ?? `Processing ${props.importProgress?.current ?? 0} of ${props.importProgress?.total ?? 0} files`}
+          </span>
+          <div style={{ width: '100%', height: '2px', backgroundColor: 'color-mix(in srgb, var(--color-fg) 12%, transparent)', overflow: 'hidden' }}>
+            <div
               style={{
-                width: `${(props.importProgress.current / props.importProgress.total) * 100}%`,
+                width: props.fileOperation?.indeterminate
+                  ? '40%'
+                  : `${((props.fileOperation?.progress ?? ((props.importProgress?.current ?? 0) / Math.max(props.importProgress?.total ?? 1, 1))) * 100)}%`,
                 height: '100%',
                 backgroundColor: 'var(--color-fg)',
-                transition: 'width 0.2s ease-out'
+                transition: props.fileOperation?.indeterminate ? 'none' : 'width 0.2s ease-out',
+                animation: props.fileOperation?.indeterminate ? 'xehpa-indeterminate 1s ease-in-out infinite' : 'none',
+                transform: props.fileOperation?.indeterminate ? 'translateX(-120%)' : 'none'
               }}
             />
           </div>
@@ -2028,7 +2447,7 @@ const AppContent: React.FC<{
             NEW
           </button>
           <button 
-            onClick={props.saveProject}
+            onClick={() => props.openSaveDialog('save-project')}
             onMouseEnter={() => setHint('SAVE PROJECT')}
             onMouseLeave={() => setHint(null)}
             style={{ 
@@ -2045,9 +2464,10 @@ const AppContent: React.FC<{
           >
             SAVE
           </button>
-          <label 
+          <button 
             onMouseEnter={() => setHint('LOAD PROJECT')}
             onMouseLeave={() => setHint(null)}
+            onClick={() => props.loadInputRef.current?.click()}
             style={{ 
               position: 'absolute',
               top: '108px',
@@ -2061,13 +2481,10 @@ const AppContent: React.FC<{
             className="hover:opacity-60 transition-opacity cursor-pointer"
           >
             LOAD
-            <input type="file" className="hidden" accept=".fck" onChange={props.loadProject} />
-          </label>
+          </button>
+          <input ref={props.loadInputRef} type="file" className="hidden" accept=".fck" onChange={props.loadProject} />
           <button 
-                onClick={() => audioEngine.exportWAV(props.currentArrangement, props.patterns, props.tempo, props.pads, props.samples).then(blob => {
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a'); a.href = url; a.download = `XEHPA_Export_${new Date().getTime()}.wav`; a.click();
-            })}
+            onClick={() => props.openSaveDialog('export-wav')}
             onMouseEnter={() => setHint('EXPORT WAV')}
             onMouseLeave={() => setHint(null)}
             style={{ 
@@ -2085,26 +2502,7 @@ const AppContent: React.FC<{
             WAV
           </button>
           <button 
-            onClick={async () => {
-              if (props.isExportingStems) return;
-              props.setIsExportingStems(true);
-              try {
-                const blob = await audioEngine.exportStems(props.currentArrangement, props.patterns, props.tempo, props.pads, props.samples);
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `XEHPA_Stems_${new Date().getTime()}.zip`;
-                a.click();
-                URL.revokeObjectURL(url);
-              } catch (error) {
-                showError(
-                  "Export failed",
-                  error instanceof Error ? error.message : "An unknown error occurred during export."
-                );
-              } finally {
-                props.setIsExportingStems(false);
-              }
-            }}
+            onClick={() => props.openSaveDialog('export-stems')}
             disabled={props.isExportingStems}
             onMouseEnter={() => setHint('EXPORT STEMS')}
             onMouseLeave={() => setHint(null)}

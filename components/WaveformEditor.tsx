@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from
 import { SampleData } from '../types';
 import { TriggerInfo, audioEngine } from '../services/audioEngine';
 import { useHint } from './HintDisplay';
+import { SampleRegionHandle, updateSampleRegionBoundary } from '../utils/sampleRegion';
 
 interface WaveformEditorProps {
   sample: SampleData;
@@ -121,8 +122,6 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       }
     };
   }, [padId]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragTarget, setDragTarget] = useState<'start' | 'end' | null>(null);
   const [isAltHeld, setIsAltHeld] = useState(false);
   const [isLoopingPreview, setIsLoopingPreview] = useState(false);
   const { setHint } = useHint();
@@ -131,183 +130,122 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
   const viewDuration = duration / activeZoom;
   const maxOffset = Math.max(0, duration - viewDuration);
   const effectiveOffset = Math.min(activeScrollOffset, maxOffset);
-
-  const HANDLE_PICK_RADIUS_PX = 40;
-  const HANDLE_DIRECT_CLICK_RADIUS_PX = 20; // Smaller radius for direct clicks to switch sliders 
-
-  // Update functions that allow crossing - swap happens in mouse move handler
-  const updateStart = useCallback((val: number) => {
-    const clampedVal = Math.max(0, Math.min(val, duration));
-    // Allow crossing - no constraints
-    onUpdate(clampedVal, end);
-  }, [end, duration, onUpdate]);
-
-  const updateEnd = useCallback((val: number) => {
-    const clampedVal = Math.max(0, Math.min(val, duration));
-    // Allow crossing - no constraints
-    onUpdate(start, clampedVal);
-  }, [start, duration, onUpdate]);
-
-  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Prevent context menu for right-click secret shortcut
-    e.preventDefault();
+  const latestWaveformStateRef = useRef({
+    start,
+    end,
+    duration,
+    effectiveOffset,
+    viewDuration,
+  });
+  latestWaveformStateRef.current = {
+    start,
+    end,
+    duration,
+    effectiveOffset,
+    viewDuration,
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const dragStateRef = useRef<{
+    target: SampleRegionHandle | null;
+    moveListener: ((event: MouseEvent) => void) | null;
+    upListener: (() => void) | null;
+  }>({
+    target: null,
+    moveListener: null,
+    upListener: null,
+  });
+
+  const setFocusModeLocally = useCallback((nextFocusMode: 'start' | 'end') => {
+    localStateRef.current = { ...localStateRef.current, focusMode: nextFocusMode };
+    setLocalFocusMode(nextFocusMode);
+  }, []);
+
+  const commitBoundaryUpdate = useCallback((target: SampleRegionHandle, value: number) => {
+    const current = latestWaveformStateRef.current;
+    const nextRegion = updateSampleRegionBoundary(
+      { start: current.start, end: current.end },
+      target,
+      value,
+      current.duration
+    );
+    onUpdate(nextRegion.start, nextRegion.end);
+    return nextRegion;
+  }, [onUpdate]);
+
+  const getTimeAtClientX = useCallback((clientX: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    
+    if (!canvas) return null;
+
     const rect = canvas.getBoundingClientRect();
-    const normalizedX = (e.clientX - rect.left) / rect.width;
-    const timeAtX = effectiveOffset + normalizedX * viewDuration;
+    if (rect.width <= 0) return null;
 
-    // Secret shortcut: right-click sets end slider and switches to END mode
-    if (e.button === 2) {
-      e.preventDefault();
-      const newEnd = Math.max(0, Math.min(timeAtX, duration));
-      updateEnd(newEnd);
-      setLocalFocusMode('end');
-      // Also initiate drag for right-click
-      setIsDragging(true);
-      setDragTarget('end');
-      
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const moveRect = canvas.getBoundingClientRect();
-        const moveNormX = (moveEvent.clientX - moveRect.left) / moveRect.width;
-        const moveTime = effectiveOffset + moveNormX * viewDuration;
-        const newEnd = Math.max(0, Math.min(moveTime, duration));
-        if (newEnd < start) {
-          // Crossed past start - swap
-          onUpdate(newEnd, start);
-          setLocalFocusMode('start');
-          setDragTarget('start');
-        } else {
-          updateEnd(moveTime);
-        }
-      };
+    const { duration: currentDuration, effectiveOffset: currentOffset, viewDuration: currentViewDuration } = latestWaveformStateRef.current;
+    const normalizedX = (clientX - rect.left) / rect.width;
+    const timeAtX = currentOffset + normalizedX * currentViewDuration;
+    return Math.max(0, Math.min(timeAtX, currentDuration));
+  }, []);
 
-      const handleMouseUp = () => {
-        setIsDragging(false);
-        setDragTarget(null);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
+  const stopCanvasDrag = useCallback(() => {
+    const { moveListener, upListener } = dragStateRef.current;
+    if (moveListener) window.removeEventListener('mousemove', moveListener);
+    if (upListener) window.removeEventListener('mouseup', upListener);
+    dragStateRef.current = { target: null, moveListener: null, upListener: null };
+  }, []);
 
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      return;
-    }
+  const beginCanvasDrag = useCallback((target: SampleRegionHandle) => {
+    stopCanvasDrag();
 
-    if (e.altKey || isAltHeld) {
-      runPreviewAt(timeAtX, false);
-      return;
-    }
+    const handleMouseMove = (event: MouseEvent) => {
+      const activeTarget = dragStateRef.current.target;
+      if (!activeTarget) return;
 
-    const timeToX = (t: number) => ((t - effectiveOffset) / viewDuration) * canvas.width;
-    const startX = timeToX(start);
-    const endX = timeToX(end);
-
-    const mouseXCss = e.clientX - rect.left;
-    const startXCss = startX * (rect.width / canvas.width);
-    const endXCss = endX * (rect.width / canvas.width);
-
-    const distToStart = Math.abs(mouseXCss - startXCss);
-    const distToEnd = Math.abs(mouseXCss - endXCss);
-
-    let target: 'start' | 'end' | null = null;
-
-    // Check ranges with different thresholds
-    const isInStartPickRange = distToStart < HANDLE_PICK_RADIUS_PX;
-    const isInEndPickRange = distToEnd < HANDLE_PICK_RADIUS_PX;
-    const isDirectClickOnStart = distToStart < HANDLE_DIRECT_CLICK_RADIUS_PX;
-    const isDirectClickOnEnd = distToEnd < HANDLE_DIRECT_CLICK_RADIUS_PX;
-
-    // STRICT RULE: If the currently focused slider is in pick range, ALWAYS use it
-    // Only switch if the focused slider is NOT in range AND you click directly on the other one
-    if (activeFocusMode === 'start') {
-      if (isInStartPickRange) {
-        // START is focused and in range - always use it
-        target = 'start';
-      } else if (isDirectClickOnEnd) {
-        // START is not in range, but clicked directly on END - switch to END
-        target = 'end';
-      }
-      // If neither condition is met, target stays null (will use focusMode below)
-    } else {
-      // focusMode === 'end'
-      if (isInEndPickRange) {
-        // END is focused and in range - always use it
-        target = 'end';
-      } else if (isDirectClickOnStart) {
-        // END is not in range, but clicked directly on START - switch to START
-        target = 'start';
-      }
-      // If neither condition is met, target stays null (will use focusMode below)
-    }
-
-    if (target) {
-      setIsDragging(true);
-      setDragTarget(target);
-      // Only update focus mode if switching to a different slider
-      if (target !== activeFocusMode) {
-        setLocalFocusMode(target);
-      }
-    } else {
-      // Clicking away from both sliders - secret shortcut: always set START by default
-      const newStart = Math.max(0, Math.min(timeAtX, duration));
-      if (newStart > end) {
-        // Crossed past end - swap
-        onUpdate(end, newStart);
-        setLocalFocusMode('end');
-        setDragTarget('end');
-      } else {
-        updateStart(timeAtX);
-        setDragTarget('start');
-        // Always switch to START mode when clicking away from sliders (secret shortcut)
-        setLocalFocusMode('start');
-      }
-      setIsDragging(true);
-    }
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const moveRect = canvas.getBoundingClientRect();
-      const moveNormX = (moveEvent.clientX - moveRect.left) / moveRect.width;
-      const moveTime = effectiveOffset + moveNormX * viewDuration;
-      
-      const activeTarget = dragTarget || activeFocusMode;
-      if (activeTarget === 'start') {
-        const newStart = Math.max(0, Math.min(moveTime, duration));
-        // Check if crossing past end - if so, swap values and focus
-        if (newStart > end) {
-          onUpdate(end, newStart);
-          setLocalFocusMode('end');
-          setDragTarget('end');
-        } else {
-          updateStart(moveTime);
-        }
-      } else {
-        const newEnd = Math.max(0, Math.min(moveTime, duration));
-        // Check if crossing past start - if so, swap values and focus
-        if (newEnd < start) {
-          onUpdate(newEnd, start);
-          setLocalFocusMode('start');
-          setDragTarget('start');
-        } else {
-          updateEnd(moveTime);
-        }
-      }
+      const nextTime = getTimeAtClientX(event.clientX);
+      if (nextTime === null) return;
+      commitBoundaryUpdate(activeTarget, nextTime);
     };
 
     const handleMouseUp = () => {
-      setIsDragging(false);
-      setDragTarget(null);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      stopCanvasDrag();
+    };
+
+    dragStateRef.current = {
+      target,
+      moveListener: handleMouseMove,
+      upListener: handleMouseUp,
     };
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+  }, [commitBoundaryUpdate, getTimeAtClientX, stopCanvasDrag]);
+
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
   };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const target = e.button === 2 ? 'end' : e.button === 0 ? 'start' : null;
+    if (!target) return;
+
+    const timeAtX = getTimeAtClientX(e.clientX);
+    if (timeAtX === null) return;
+
+    if (target === 'end') {
+      e.preventDefault();
+    }
+
+    if (target === 'start' && (e.altKey || isAltHeld)) {
+      runPreviewAt(timeAtX, false);
+      return;
+    }
+
+    setFocusModeLocally(target);
+    commitBoundaryUpdate(target, timeAtX);
+    beginCanvasDrag(target);
+  };
+
+  useEffect(() => {
+    return () => stopCanvasDrag();
+  }, [stopCanvasDrag]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -315,8 +253,11 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const nudge = e.shiftKey ? 0.05 : 0.001;
         const dir = e.key === 'ArrowLeft' ? -1 : 1;
-        if (activeFocusMode === 'start') updateStart(start + dir * nudge);
-        else updateEnd(end + dir * nudge);
+        const current = latestWaveformStateRef.current;
+        const nextValue = activeFocusMode === 'start'
+          ? current.start + dir * nudge
+          : current.end + dir * nudge;
+        commitBoundaryUpdate(activeFocusMode, nextValue);
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -328,7 +269,7 @@ const WaveformEditor: React.FC<WaveformEditorProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [activeFocusMode, start, end, updateStart, updateEnd]);
+  }, [activeFocusMode, commitBoundaryUpdate]);
 
   useEffect(() => {
     const container = containerRef.current;

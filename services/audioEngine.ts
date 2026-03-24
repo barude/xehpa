@@ -1,4 +1,5 @@
 import { SampleData, PadConfig, LoopHit, Pattern, SongStep } from '../types';
+import { MIN_SAMPLE_REGION_DURATION } from '../utils/sampleRegion';
 
 export interface TriggerInfo {
   startTime: number;
@@ -90,6 +91,15 @@ class AudioEngine {
       }
     };
     this.ctx.addEventListener('statechange', this.stateChangeHandler);
+  }
+
+  private emitProgress(
+    onProgress: ((progress: number, detail?: string) => void) | undefined,
+    progress: number,
+    detail?: string
+  ) {
+    if (!onProgress) return;
+    onProgress(Math.max(0, Math.min(1, progress)), detail);
   }
 
   destroy() {
@@ -334,11 +344,14 @@ class AudioEngine {
   private trackTrigger(trigger: TriggerInfo, chokeGroupId: string | null) {
     this.activeTriggers.add(trigger);
     if (chokeGroupId) this.exclusiveTriggers.set(chokeGroupId, trigger);
-    trigger.source.onended = () => {
+    const previousOnEnded = trigger.source.onended;
+    trigger.source.onended = (event) => {
       this.activeTriggers.delete(trigger);
+      this.scheduledStopTimes.delete(trigger.source);
       if (chokeGroupId && this.exclusiveTriggers.get(chokeGroupId) === trigger) {
         this.exclusiveTriggers.delete(chokeGroupId);
       }
+      previousOnEnded?.call(trigger.source, event);
     };
   }
 
@@ -380,11 +393,25 @@ class AudioEngine {
     } catch (e) {}
   }
 
-  private buildSignalChain(pad: PadConfig, time: number, playbackDuration: number, context: BaseAudioContext, isLooping: boolean = false) {
+  private buildSignalChain(
+    pad: PadConfig,
+    time: number,
+    playbackDuration: number,
+    context: BaseAudioContext,
+    options: {
+      isLooping?: boolean;
+      gainScale?: number;
+      output?: AudioNode;
+      reverbSendTarget?: AudioNode | null;
+      reverbSendLevelScale?: number;
+    } = {}
+  ) {
     const gain = context.createGain();
     const panner = context.createStereoPanner();
     const filter = context.createBiquadFilter();
     const reverbSend = context.createGain();
+    const isLooping = options.isLooping ?? false;
+    const gainScale = options.gainScale ?? 1;
 
     // Extract envelope parameters with backward-compatible defaults
     const attack = Math.max(0.001, pad.attack);
@@ -393,7 +420,7 @@ class AudioEngine {
     const release = Math.max(0.005, pad.release);
     
     // Calculate envelope stages
-    const peakLevel = pad.volume; // Peak after attack
+    const peakLevel = pad.volume * gainScale; // Peak after attack
     const sustainLevel = peakLevel * sustain; // Level after decay
     
     // AMP ENVELOPE - Full ADSR implementation
@@ -497,24 +524,33 @@ class AudioEngine {
     panner.pan.setValueAtTime(pad.pan, time);
     
     // Reverb send (post-filter, post-pan)
-    reverbSend.gain.setValueAtTime(pad.reverbSend, time);
+    reverbSend.gain.setValueAtTime(pad.reverbSend * (options.reverbSendLevelScale ?? 1), time);
 
     // Signal chain: Filter -> Pan -> Gain -> [Master + Reverb Send]
     filter.connect(panner);
     panner.connect(gain);
-    
-    if (context instanceof AudioContext) {
-        gain.connect(this.masterGain);
-        gain.connect(reverbSend);
-        reverbSend.connect(this.reverbGain);
-    } else {
-        gain.connect(context.destination);
+
+    gain.connect(options.output ?? (context instanceof AudioContext ? this.masterGain : context.destination));
+
+    if (options.reverbSendTarget) {
+      gain.connect(reverbSend);
+      reverbSend.connect(options.reverbSendTarget);
+    } else if (context instanceof AudioContext) {
+      gain.connect(reverbSend);
+      reverbSend.connect(this.reverbGain);
     }
 
     return { gain, panner, filter, reverbSend };
   }
 
-  playPad(buffer: AudioBuffer, pad: PadConfig, offsetOverride?: number, contextId: string = 'global', isLooping: boolean = false): TriggerInfo {
+  playPad(
+    buffer: AudioBuffer,
+    pad: PadConfig,
+    offsetOverride?: number,
+    contextId: string = 'global',
+    isLooping: boolean = false,
+    gainScale: number = 1
+  ): TriggerInfo {
     // Aggressive resume before every playback for live performance reliability
     if (this.ctx.state !== 'running') {
       this.resume();
@@ -540,7 +576,7 @@ class AudioEngine {
     
     // Validate pad configuration for normal playback and looping
     if (offsetOverride === undefined || isLooping) {
-      if (pad.end <= pad.start || pad.end - pad.start < 0.001) {
+      if (pad.end <= pad.start || pad.end - pad.start < MIN_SAMPLE_REGION_DURATION) {
         throw new Error("Invalid pad configuration: end must be greater than start");
         throw new Error("Invalid pad configuration");
       }
@@ -552,7 +588,7 @@ class AudioEngine {
         throw new Error("Invalid preview offset: must be within buffer duration");
         throw new Error("Invalid preview offset");
       }
-      if (playEnd - playStart < 0.001) {
+      if (playEnd - playStart < MIN_SAMPLE_REGION_DURATION) {
         throw new Error("Invalid preview offset: insufficient duration remaining");
         throw new Error("Invalid preview offset");
       }
@@ -590,7 +626,10 @@ class AudioEngine {
     // Total duration in physical seconds, relative to current playback rate
     const playbackDuration = (adjustedPlayEnd - adjustedPlayStart) / rate;
 
-    const nodes = this.buildSignalChain(pad, triggerTime, playbackDuration, this.ctx, isLooping);
+    const nodes = this.buildSignalChain(pad, triggerTime, playbackDuration, this.ctx, {
+      isLooping,
+      gainScale,
+    });
     source.connect(nodes.filter);
     
     if (isLooping) {
@@ -688,6 +727,73 @@ class AudioEngine {
     return trigger;
   }
 
+  private stopOfflineExclusiveTrigger(
+    activeTrigger: { source: AudioBufferSourceNode; gain: GainNode; hasStopScheduled: boolean } | undefined,
+    time: number
+  ) {
+    if (!activeTrigger || activeTrigger.hasStopScheduled) return;
+    activeTrigger.hasStopScheduled = true;
+    try {
+      activeTrigger.gain.gain.cancelScheduledValues(time);
+      activeTrigger.gain.gain.setValueAtTime(activeTrigger.gain.gain.value, time);
+      activeTrigger.gain.gain.linearRampToValueAtTime(0, time + 0.005);
+      activeTrigger.source.stop(time + 0.01);
+    } catch (error) {
+      // Offline stop failures are non-fatal; rendering can continue.
+    }
+  }
+
+  private scheduleOfflinePadHit(
+    offlineCtx: OfflineAudioContext,
+    reverbSendTarget: AudioNode,
+    monoGroups: Map<string, { source: AudioBufferSourceNode; gain: GainNode; hasStopScheduled: boolean }>,
+    buffer: AudioBuffer,
+    pad: PadConfig,
+    time: number,
+    contextId: string
+  ) {
+    if (pad.end <= pad.start || pad.end - pad.start < MIN_SAMPLE_REGION_DURATION) {
+      return;
+    }
+
+    if (pad.playMode === 'MONO') {
+      this.stopOfflineExclusiveTrigger(monoGroups.get(contextId), time);
+    }
+
+    let adjustedPlayStart = pad.start;
+    let adjustedPlayEnd = pad.end;
+    let activeBuffer = buffer;
+
+    if (pad.isReversed) {
+      activeBuffer = this.createReversedRegionBuffer(buffer, pad.start, pad.end);
+      adjustedPlayStart = 0;
+      adjustedPlayEnd = pad.end - pad.start;
+    }
+
+    const source = offlineCtx.createBufferSource();
+    source.buffer = activeBuffer;
+    source.playbackRate.value = Math.pow(2, (pad.tune || 0) / 12);
+    source.detune.value = pad.fineTune || 0;
+
+    const playbackDuration = (adjustedPlayEnd - adjustedPlayStart) / source.playbackRate.value;
+    const nodes = this.buildSignalChain(pad, time, playbackDuration, offlineCtx, {
+      output: offlineCtx.destination,
+      reverbSendTarget,
+    });
+
+    source.connect(nodes.filter);
+    source.start(time, adjustedPlayStart, adjustedPlayEnd - adjustedPlayStart);
+    source.stop(time + playbackDuration);
+
+    if (pad.playMode === 'MONO') {
+      monoGroups.set(contextId, {
+        source,
+        gain: nodes.gain,
+        hasStopScheduled: false,
+      });
+    }
+  }
+
   playMetronome(time: number, isDownbeat: boolean) {
     const osc = this.ctx.createOscillator();
     const env = this.ctx.createGain();
@@ -712,7 +818,15 @@ class AudioEngine {
     this.metronomeOscillators.clear();
   }
 
-  async exportWAV(steps: SongStep[], patterns: Pattern[], tempo: number, pads: PadConfig[], samples: SampleData[]): Promise<Blob> {
+  async exportWAV(
+    steps: SongStep[],
+    patterns: Pattern[],
+    tempo: number,
+    pads: PadConfig[],
+    samples: SampleData[],
+    onProgress?: (progress: number, detail?: string) => void
+  ): Promise<Blob> {
+    this.emitProgress(onProgress, 0.05, 'Analyzing arrangement');
     const beatDur = 60 / tempo;
     let totalDur = 0;
     steps.forEach(s => {
@@ -725,14 +839,20 @@ class AudioEngine {
     
     const padding = 0.05;
     const offlineCtx = new OfflineAudioContext(2, Math.floor((totalDur + padding + 1) * 44100), 44100);
+    const offReverbGain = offlineCtx.createGain();
+    offReverbGain.gain.setValueAtTime(this.reverbGain.gain.value, 0);
     const offReverb = offlineCtx.createConvolver();
     offReverb.buffer = this.reverbNode.buffer;
+    offReverbGain.connect(offReverb);
     offReverb.connect(offlineCtx.destination);
+    const monoGroups = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; hasStopScheduled: boolean }>();
 
     let currentOffset = padding;
-    for (const step of steps) {
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+      const step = steps[stepIndex];
       const activePats = step.activePatternIds.map(id => patterns.find(p => p.id === id)).filter(Boolean) as Pattern[];
       const stepBaseDur = activePats.reduce((max, p) => Math.max(max, p.bars * 4 * beatDur), 0);
+      this.emitProgress(onProgress, 0.12 + (((stepIndex + 1) / steps.length) * 0.28), `Scheduling section ${stepIndex + 1}/${steps.length}`);
       for (let r = 0; r < step.repeats; r++) {
         for (const pattern of activePats) {
           for (const hit of pattern.hits) {
@@ -740,109 +860,16 @@ class AudioEngine {
             const sample = samples.find(s => s.id === pad?.sampleId);
             if (!pad || !sample) continue;
             const absoluteHitTime = currentOffset + (r * stepBaseDur) + (hit.beatOffset * beatDur);
-            const rate = Math.pow(2, (pad.tune || 0) / 12);
-            
-            // For reversed playback, reverse only the selected region
-            let adjustedPlayStart = pad.start;
-            let adjustedPlayEnd = pad.end;
-            let activeBuffer = sample.buffer;
-            
-            if (pad.isReversed) {
-              // Create a reversed buffer containing only the selected region (no caching)
-              activeBuffer = this.createReversedRegionBuffer(sample.buffer, pad.start, pad.end);
-              // In the reversed region buffer, we play from 0 to (end - start)
-              adjustedPlayStart = 0;
-              adjustedPlayEnd = pad.end - pad.start;
-            }
-            
-            const playbackDuration = (adjustedPlayEnd - adjustedPlayStart) / rate;
-            
-            // Extract envelope parameters with backward-compatible defaults
-            const attack = Math.max(0.001, pad.attack);
-            const decay = Math.max(0, pad.decay ?? 0);
-            const sustain = Math.max(0, Math.min(1, pad.sustain ?? 1));
-            const release = Math.max(0.005, pad.release);
-            
-            const peakLevel = pad.volume;
-            const sustainLevel = peakLevel * sustain;
-
-            const offGain = offlineCtx.createGain();
-            const offPan = offlineCtx.createStereoPanner();
-            const offFilt = offlineCtx.createBiquadFilter();
-            const offRevSend = offlineCtx.createGain();
-
-            // Filter setup
-            const filterType = pad.filterType ?? 'lowpass';
-            offFilt.type = filterType;
-            const baseCutoff = Math.max(20, Math.min(20000, pad.cutoff));
-            const filterEnvAmount = pad.filterEnv ?? 0;
-            
-            // AMP ENVELOPE - Full ADSR
-            offGain.gain.setValueAtTime(0, absoluteHitTime);
-            offGain.gain.linearRampToValueAtTime(peakLevel, absoluteHitTime + attack);
-            
-            const attackEndTime = absoluteHitTime + attack;
-            const decayEndTime = attackEndTime + decay;
-            
-            if (decay > 0 && sustain < 1) {
-              offGain.gain.linearRampToValueAtTime(sustainLevel, decayEndTime);
-            } else {
-              offGain.gain.setValueAtTime(sustainLevel, attackEndTime);
-            }
-            
-            const adsDuration = attack + decay;
-            const releaseStartTime = absoluteHitTime + playbackDuration - Math.min(release, Math.max(0, playbackDuration - adsDuration));
-            const actualReleaseStart = Math.max(decayEndTime, releaseStartTime);
-            
-            offGain.gain.setValueAtTime(sustainLevel, actualReleaseStart);
-            offGain.gain.linearRampToValueAtTime(0, absoluteHitTime + playbackDuration);
-            
-            // FILTER with envelope modulation
-            if (filterEnvAmount === 0) {
-              offFilt.frequency.setValueAtTime(baseCutoff, absoluteHitTime);
-            } else {
-              const maxModHz = filterEnvAmount > 0 
-                ? Math.min(20000 - baseCutoff, baseCutoff * 0.8)
-                : Math.min(baseCutoff - 20, baseCutoff * 0.8);
-              const modDepth = Math.abs(filterEnvAmount);
-              
-              offFilt.frequency.setValueAtTime(baseCutoff, absoluteHitTime);
-              const attackModFreq = baseCutoff + (maxModHz * modDepth);
-              offFilt.frequency.linearRampToValueAtTime(attackModFreq, attackEndTime);
-              
-              if (decay > 0) {
-                // During decay: filter follows envelope proportionally to sustain level
-                const sustainModFreq = baseCutoff + (maxModHz * modDepth * sustain); // sustain is 0-1 ratio
-                offFilt.frequency.linearRampToValueAtTime(sustainModFreq, decayEndTime);
-                offFilt.frequency.setValueAtTime(sustainModFreq, actualReleaseStart);
-                offFilt.frequency.linearRampToValueAtTime(baseCutoff, absoluteHitTime + playbackDuration);
-              } else {
-                // No decay: filter holds at attack modulation during sustain, returns during release
-                offFilt.frequency.setValueAtTime(attackModFreq, actualReleaseStart);
-                offFilt.frequency.linearRampToValueAtTime(baseCutoff, absoluteHitTime + playbackDuration);
-              }
-            }
-            
-            offFilt.Q.setValueAtTime(Math.max(0, Math.min(15, pad.resonance)), absoluteHitTime);
-            offPan.pan.setValueAtTime(pad.pan, absoluteHitTime);
-            offRevSend.gain.setValueAtTime(pad.reverbSend, absoluteHitTime);
-
-            const source = offlineCtx.createBufferSource();
-            source.buffer = activeBuffer;
-            source.playbackRate.value = rate;
-            source.connect(offFilt); offFilt.connect(offPan); offPan.connect(offGain); 
-            offGain.connect(offlineCtx.destination); offGain.connect(offRevSend); offRevSend.connect(offReverb);
-            
-            // Use remapped positions (already calculated above)
-            source.start(absoluteHitTime, adjustedPlayStart, adjustedPlayEnd - adjustedPlayStart);
-            source.stop(absoluteHitTime + playbackDuration);
+            this.scheduleOfflinePadHit(offlineCtx, offReverbGain, monoGroups, sample.buffer, pad, absoluteHitTime, pattern.id);
           }
         }
       }
       currentOffset += stepBaseDur * step.repeats;
     }
 
+    this.emitProgress(onProgress, 0.48, 'Rendering WAV');
     const rendered = await offlineCtx.startRendering();
+    this.emitProgress(onProgress, 0.88, 'Encoding WAV');
     return this.encodeWAV(rendered, true); // Use high quality 32-bit float
   }
 
@@ -932,8 +959,10 @@ class AudioEngine {
     patterns: Pattern[],
     tempo: number,
     pads: PadConfig[],
-    samples: SampleData[]
+    samples: SampleData[],
+    onProgress?: (progress: number, detail?: string) => void
   ): Promise<Blob> {
+    this.emitProgress(onProgress, 0.05, 'Analyzing arrangement');
     const beatDur = 60 / tempo;
     
     // Calculate total song duration
@@ -957,9 +986,12 @@ class AudioEngine {
     const stems: Array<{ filename: string; audio: Blob }> = [];
     
     // Render each pattern as a stem
-    for (const patternId of uniquePatternIds) {
+    const patternIds = Array.from(uniquePatternIds);
+    for (let index = 0; index < patternIds.length; index++) {
+      const patternId = patternIds[index];
       const pattern = patterns.find(p => p.id === patternId);
       if (!pattern) continue;
+      this.emitProgress(onProgress, 0.14 + (((index + 1) / Math.max(patternIds.length, 1)) * 0.58), `Rendering stem ${index + 1}/${patternIds.length}`);
       
       const stemBlob = await this.renderPatternStem(
         pattern,
@@ -1034,7 +1066,9 @@ For arrangement details, see arrangement.json`;
     zip.file('README.txt', readme);
     
     // Generate ZIP blob
+    this.emitProgress(onProgress, 0.82, 'Packing stems');
     const zipBlob = await zip.generateAsync({ type: 'blob' });
+    this.emitProgress(onProgress, 0.94, 'Preparing download');
     return zipBlob;
   }
 
@@ -1053,9 +1087,13 @@ For arrangement details, see arrangement.json`;
     const offlineCtx = new OfflineAudioContext(2, Math.ceil((totalDuration + padding) * sampleRate), sampleRate);
     
     // Set up reverb (same as main export)
+    const offReverbGain = offlineCtx.createGain();
+    offReverbGain.gain.setValueAtTime(this.reverbGain.gain.value, 0);
     const offReverb = offlineCtx.createConvolver();
     offReverb.buffer = this.reverbNode.buffer;
+    offReverbGain.connect(offReverb);
     offReverb.connect(offlineCtx.destination);
+    const monoGroups = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; hasStopScheduled: boolean }>();
     
     // Find all positions where this pattern appears
     let currentTime = 0;
@@ -1082,102 +1120,7 @@ For arrangement details, see arrangement.json`;
             if (!pad || !sample) return;
             
             const absoluteHitTime = patternStartTime + (hit.beatOffset * beatDur);
-            const rate = Math.pow(2, (pad.tune || 0) / 12);
-            
-            // Handle reversed playback
-            let adjustedPlayStart = pad.start;
-            let adjustedPlayEnd = pad.end;
-            let activeBuffer = sample.buffer;
-            
-            if (pad.isReversed) {
-              activeBuffer = this.createReversedRegionBuffer(sample.buffer, pad.start, pad.end);
-              adjustedPlayStart = 0;
-              adjustedPlayEnd = pad.end - pad.start;
-            }
-            
-            const playbackDuration = (adjustedPlayEnd - adjustedPlayStart) / rate;
-            
-            // Extract envelope parameters
-            const attack = Math.max(0.001, pad.attack);
-            const decay = Math.max(0, pad.decay ?? 0);
-            const sustain = Math.max(0, Math.min(1, pad.sustain ?? 1));
-            const release = Math.max(0.005, pad.release);
-            const peakLevel = pad.volume;
-            const sustainLevel = peakLevel * sustain;
-            
-            // Create audio nodes
-            const offGain = offlineCtx.createGain();
-            const offPan = offlineCtx.createStereoPanner();
-            const offFilt = offlineCtx.createBiquadFilter();
-            const offRevSend = offlineCtx.createGain();
-            
-            // Filter setup
-            const filterType = pad.filterType ?? 'lowpass';
-            offFilt.type = filterType;
-            const baseCutoff = Math.max(20, Math.min(20000, pad.cutoff));
-            const filterEnvAmount = pad.filterEnv ?? 0;
-            
-            // AMP ENVELOPE
-            offGain.gain.setValueAtTime(0, absoluteHitTime);
-            offGain.gain.linearRampToValueAtTime(peakLevel, absoluteHitTime + attack);
-            
-            const attackEndTime = absoluteHitTime + attack;
-            const decayEndTime = attackEndTime + decay;
-            
-            if (decay > 0 && sustain < 1) {
-              offGain.gain.linearRampToValueAtTime(sustainLevel, decayEndTime);
-            } else {
-              offGain.gain.setValueAtTime(sustainLevel, attackEndTime);
-            }
-            
-            const adsDuration = attack + decay;
-            const releaseStartTime = absoluteHitTime + playbackDuration - Math.min(release, Math.max(0, playbackDuration - adsDuration));
-            const actualReleaseStart = Math.max(decayEndTime, releaseStartTime);
-            
-            offGain.gain.setValueAtTime(sustainLevel, actualReleaseStart);
-            offGain.gain.linearRampToValueAtTime(0, absoluteHitTime + playbackDuration);
-            
-            // FILTER with envelope
-            if (filterEnvAmount === 0) {
-              offFilt.frequency.setValueAtTime(baseCutoff, absoluteHitTime);
-            } else {
-              const maxModHz = filterEnvAmount > 0
-                ? Math.min(20000 - baseCutoff, baseCutoff * 0.8)
-                : Math.min(baseCutoff - 20, baseCutoff * 0.8);
-              const modDepth = Math.abs(filterEnvAmount);
-              
-              offFilt.frequency.setValueAtTime(baseCutoff, absoluteHitTime);
-              const attackModFreq = baseCutoff + (maxModHz * modDepth);
-              offFilt.frequency.linearRampToValueAtTime(attackModFreq, attackEndTime);
-              
-              if (decay > 0) {
-                const sustainModFreq = baseCutoff + (maxModHz * modDepth * sustain);
-                offFilt.frequency.linearRampToValueAtTime(sustainModFreq, decayEndTime);
-                offFilt.frequency.setValueAtTime(sustainModFreq, actualReleaseStart);
-                offFilt.frequency.linearRampToValueAtTime(baseCutoff, absoluteHitTime + playbackDuration);
-              } else {
-                offFilt.frequency.setValueAtTime(attackModFreq, actualReleaseStart);
-                offFilt.frequency.linearRampToValueAtTime(baseCutoff, absoluteHitTime + playbackDuration);
-              }
-            }
-            
-            offFilt.Q.setValueAtTime(Math.max(0, Math.min(15, pad.resonance)), absoluteHitTime);
-            offPan.pan.setValueAtTime(pad.pan, absoluteHitTime);
-            offRevSend.gain.setValueAtTime(pad.reverbSend, absoluteHitTime);
-            
-            // Connect and play
-            const source = offlineCtx.createBufferSource();
-            source.buffer = activeBuffer;
-            source.playbackRate.value = rate;
-            source.connect(offFilt);
-            offFilt.connect(offPan);
-            offPan.connect(offGain);
-            offGain.connect(offlineCtx.destination);
-            offGain.connect(offRevSend);
-            offRevSend.connect(offReverb);
-            
-            source.start(absoluteHitTime, adjustedPlayStart, adjustedPlayEnd - adjustedPlayStart);
-            source.stop(absoluteHitTime + playbackDuration);
+            this.scheduleOfflinePadHit(offlineCtx, offReverbGain, monoGroups, sample.buffer, pad, absoluteHitTime, targetPattern.id);
           });
         }
       }

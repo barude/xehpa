@@ -176,6 +176,10 @@
             background: var(--color-hover-bg) !important;
             color: var(--color-hover-fg) !important;
         }
+        @keyframes xehpa-indeterminate {
+            0% { transform: translateX(-120%); }
+            100% { transform: translateX(320%); }
+        }
         /* Pattern button hover state */
         .pattern-button-hover:hover {
             background: var(--color-hover-bg) !important;
